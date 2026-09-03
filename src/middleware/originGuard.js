@@ -13,11 +13,22 @@ function requestOrigin(req) {
   return null;
 }
 
+export function isAllowedOrigin(origin, allowedOrigins) {
+  if (!origin) return false;
+  return allowedOrigins.some((allowed) => {
+    if (allowed.startsWith('https://*.')) {
+      const suffix = allowed.slice('https://*.'.length);
+      return origin.startsWith('https://') && origin.endsWith(`.${suffix}`)
+        && origin.length > `https://.${suffix}`.length;
+    }
+    return origin === allowed;
+  });
+}
+
 export function originGuard(allowedOrigins) {
-  const allowed = new Set(allowedOrigins);
   return (req, res, next) => {
     const origin = requestOrigin(req);
-    if (!origin || !allowed.has(origin)) {
+    if (!isAllowedOrigin(origin, allowedOrigins)) {
       return res.status(403).json({ error: 'Origin not allowed.' });
     }
     next();

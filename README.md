@@ -71,8 +71,9 @@ Liveness probe, returns `{ "status": "ok" }`. Not rate-limited or origin-restric
 ## Security
 
 - **Origin whitelist:** requests must include an `Origin` (or `Referer`) header matching
-  `ALLOWED_ORIGINS`, and browsers are restricted via CORS to the same list. Everything
-  else gets `403`.
+  `ALLOWED_ORIGINS`, and browsers are restricted via CORS to the same list. Entries
+  such as `https://*.mybrightsites.com` allow only HTTPS subdomains of that domain.
+  Everything else gets `403`.
 - **Rate limiting:** per client IP (defaults: 100 requests / 15 minutes).
 - Request bodies are capped at 10 KB and strictly validated.
 - The Google API key lives only in a server-side env var and is never sent to clients.
@@ -153,7 +154,7 @@ heroku config:set ALLOWED_ORIGINS=https://store1.com,https://store2.com,https://
 | Env var | Required | Default | Description |
 | --- | --- | --- | --- |
 | `GOOGLE_MAPS_API_KEY` | ✅ | | Google Cloud API key (Address Validation API enabled) |
-| `ALLOWED_ORIGINS` | ✅ | | Comma-separated storefront origins |
+| `ALLOWED_ORIGINS` | ✅ | | Comma-separated storefront origins; supports `https://*.example.com` |
 | `PORT` | | `3000` | Listen port (set automatically by Heroku) |
 | `RATE_LIMIT_WINDOW_MS` | | `900000` | Rate-limit window (15 min) |
 | `RATE_LIMIT_MAX` | | `100` | Max requests per IP per window |

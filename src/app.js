@@ -1,7 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import rateLimit from 'express-rate-limit';
-import { originGuard } from './middleware/originGuard.js';
+import { isAllowedOrigin, originGuard } from './middleware/originGuard.js';
 import { errorHandler } from './middleware/errorHandler.js';
 import { createValidateAddressRouter } from './routes/validateAddress.js';
 
@@ -15,7 +15,12 @@ export function createApp(config) {
 
   app.use(express.json({ limit: '10kb' }));
 
-  app.use(cors({ origin: config.allowedOrigins, methods: ['GET', 'POST'] }));
+  app.use(cors({
+    origin: (origin, callback) => {
+      callback(null, !origin || isAllowedOrigin(origin, config.allowedOrigins));
+    },
+    methods: ['GET', 'POST'],
+  }));
 
   const limiter = rateLimit({
     windowMs: config.rateLimitWindowMs,
