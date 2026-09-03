@@ -78,6 +78,39 @@ Liveness probe, returns `{ "status": "ok" }`. Not rate-limited or origin-restric
 - The Google API key lives only in a server-side env var and is never sent to clients.
 - Timeouts on upstream Google calls (default 10 s) return `504` instead of hanging.
 
+## Front-end integration
+
+`address-validation.js` intercepts the sample checkout form's Continue action. It:
+
+1. Prevents the normal submission while the address is validated.
+2. Shows the previously entered and suggested addresses side by side when Google
+   returns a correction.
+3. Applies either **Use updated address** or **Continue with previous address** to
+   the existing form, then resumes the form's native submission.
+
+Include it after the form (or with `defer`) and configure the API URL:
+
+```html
+<form id="checkout-form"
+      data-validation-api="https://your-app.herokuapp.com"
+      action="/checkout/address"
+      method="post">
+  ...
+</form>
+<script src="/path/to/address-validation.js" defer></script>
+```
+
+The script sends a `regionCode` to the API. For international forms, add a
+`data-region-code` attribute containing the ISO 3166-1 alpha-2 code to each
+country option, for example:
+
+```html
+<option value="Germany" data-region-code="DE">Germany</option>
+```
+
+The sample includes common country mappings and can be extended in
+`address-validation.js` when the storefront's country list is larger.
+
 ## Local development
 
 Prerequisites: Node.js 24 and a Google Cloud API key with the
