@@ -154,7 +154,7 @@ heroku config:set ALLOWED_ORIGINS=https://store1.com,https://store2.com,https://
 | Env var | Required | Default | Description |
 | --- | --- | --- | --- |
 | `GOOGLE_MAPS_API_KEY` | ✅ | | Google Cloud API key (Address Validation API enabled) |
-| `ALLOWED_ORIGINS` | ✅ | | Comma-separated storefront origins; supports `https://*.example.com` |
+| `ALLOWED_ORIGINS` | ✅ | | Comma-separated HTTPS storefront origins; supports `https://*.example.com` |
 | `PORT` | | `3000` | Listen port (set automatically by Heroku) |
 | `RATE_LIMIT_WINDOW_MS` | | `900000` | Rate-limit window (15 min) |
 | `RATE_LIMIT_MAX` | | `100` | Max requests per IP per window |
