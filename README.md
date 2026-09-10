@@ -89,7 +89,8 @@ Liveness probe, returns `{ "status": "ok" }`. Not rate-limited or origin-restric
 3. Applies either **Use updated address** or **Continue with previous address** to
    the existing form, then resumes the form's native submission.
 
-Include it after the form (or with `defer`) and configure the API URL:
+Link to the script through GitHub Pages in your frontend Liquid template and
+configure the API URL on the form:
 
 ```html
 <form id="checkout-form"
@@ -98,19 +99,29 @@ Include it after the form (or with `defer`) and configure the API URL:
       method="post">
   ...
 </form>
-<script src="/path/to/address-validation.js" defer></script>
+<script
+  src="https://billymitchell.github.io/address-validation-server/address-validation.js?v={{ 'now' | date: '%Y%m%d%H%M%S' }}"
+></script>
 ```
 
-The script sends a `regionCode` to the API. For international forms, add a
-`data-region-code` attribute containing the ISO 3166-1 alpha-2 code to each
-country option, for example:
+The Liquid timestamp adds a cache-busting query parameter when the template is
+rendered. For plain HTML, omit `?v={{ 'now' | date: '%Y%m%d%H%M%S' }}`.
+The script waits until the DOM is ready before initializing.
+
+The script converts the storefront's country names into two-letter `regionCode`
+values for the API (for example, `United States` becomes `US`). It includes all
+249 countries and territories in the storefront dropdown and also accepts
+two-letter option values. The form's country values remain unchanged.
+
+For custom or translated country names, add a `data-region-code` attribute
+containing the ISO 3166-1 alpha-2 code. This takes precedence over the option value:
 
 ```html
 <option value="Germany" data-region-code="DE">Germany</option>
 ```
 
-The sample includes common country mappings and can be extended in
-`address-validation.js` when the storefront's country list is larger.
+Unknown country names show an error before an API request is sent. Additional
+name mappings can be added to `countryCodes` in `address-validation.js`.
 
 ## Local development
 
