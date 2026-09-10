@@ -151,13 +151,13 @@ test('accepting a suggested country selects the corresponding full-name option',
   assert.equal(page.country.value, 'Canada');
 });
 
-test('suggested ZIP displays and applies all digits without a dash', async () => {
-  for (const suggestedZip of ['20191-1441', '201911441', '20190']) {
+test('suggested US ZIP displays and applies only the five-digit ZIP code', async () => {
+  for (const suggestedZip of ['20192-1441', '201921441', '20190']) {
     const page = checkout('United States', undefined, undefined, undefined, suggestedZip);
     await page.submit();
-    const expected = suggestedZip.replace(/-/g, '');
+    const expected = suggestedZip.replace(/\D/g, '').slice(0, 5);
     assert.ok(page.modalNodes['[data-suggested-address]'].textContent.includes(expected));
-    assert.ok(!page.modalNodes['[data-suggested-address]'].textContent.includes('-'));
+    assert.doesNotMatch(page.modalNodes['[data-suggested-address]'].textContent, /\b20192-1441\b|\b201921441\b/);
     page.modalNodes['[data-use-updated]'].click();
     assert.equal(page.zip.value, expected);
   }

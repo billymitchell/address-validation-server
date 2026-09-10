@@ -614,6 +614,14 @@
     return countryIndex[nameKey(country)] || '';
   }
 
+  function normalizeSuggestedPostalCode(postalCode, regionCode) {
+    var value = postalCode.replace(/-/g, '');
+    if (resolveCountryCode(regionCode) !== 'US') return value;
+
+    var digits = value.replace(/\D/g, '');
+    return digits.length >= 5 ? digits.slice(0, 5) : '';
+  }
+
   function countryCodeForOption(option) {
     if (!option) return '';
     return resolveCountryCode(option.getAttribute('data-region-code'))
@@ -848,7 +856,7 @@
       var suggested = result.suggestedAddress || original;
       if (result.suggestedAddress && typeof suggested.postalCode === 'string') {
         suggested = Object.assign({}, suggested, {
-          postalCode: suggested.postalCode.replace(/-/g, '')
+          postalCode: normalizeSuggestedPostalCode(suggested.postalCode, suggested.regionCode)
         });
       }
 
