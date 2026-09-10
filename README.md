@@ -22,7 +22,7 @@ Request body (all fields map to Google's `PostalAddress`):
 | `postalCode` | string | one of these | ZIP / postal code |
 | `locality` | string | | City / town |
 | `administrativeArea` | string | | State / province / region |
-| `organization` | string | | Company name |
+| `organization` | string | No | Optional company name; blank values are ignored |
 
 Example request:
 
@@ -161,6 +161,13 @@ heroku config:set ALLOWED_ORIGINS=https://store1.com,https://store2.com,https://
 ```
 
 ## Configuration
+
+If validation returns `502`, the error message now distinguishes Google API
+access, billing, key restrictions, and quota failures when Google supplies a
+recognized reason. Server logs include Google's HTTP status and a recognized
+reason code, without the raw upstream message, metadata, API key, or address.
+Check that Address Validation API and billing are enabled for the key's project
+and that the key restrictions permit calls from the backend server.
 
 | Env var | Required | Default | Description |
 | --- | --- | --- | --- |

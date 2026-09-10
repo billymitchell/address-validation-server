@@ -32,16 +32,18 @@ function googleResponse(overrides = {}) {
         hasReplacedComponents: false,
         ...(overrides.verdict ?? {}),
       },
-      postalAddress: {
-        regionCode: 'US',
-        postalCode: '94043',
-        administrativeArea: 'CA',
-        locality: 'Mountain View',
-        addressLines: ['1600 Amphitheatre Pkwy'],
-        ...(overrides.postalAddress ?? {}),
+      address: {
+        postalAddress: {
+          regionCode: 'US',
+          postalCode: '94043',
+          administrativeArea: 'CA',
+          locality: 'Mountain View',
+          addressLines: ['1600 Amphitheatre Pkwy'],
+          ...(overrides.postalAddress ?? {}),
+        },
+        formattedAddress: '1600 Amphitheatre Parkway, Mountain View, CA 94043, USA',
+        addressComponents: overrides.addressComponents ?? [],
       },
-      formattedAddress: '1600 Amphitheatre Parkway, Mountain View, CA 94043, USA',
-      addressComponents: overrides.addressComponents ?? [],
     },
   };
 }
@@ -99,6 +101,33 @@ test('returns confirmed for a clean address', async () => {
       assert.equal(body.suggestedAddress.postalCode, '94043');
       assert.equal(body.verdict.addressComplete, true);
       assert.deepEqual(body.messages, []);
+    });
+  } finally {
+    restore();
+  }
+});
+
+test('organization is optional and blank values are omitted from the upstream request', async () => {
+  const upstreamAddresses = [];
+  const restore = mockGoogleFetch(async (url, options) => {
+    upstreamAddresses.push(JSON.parse(options.body).address);
+    return new Response(JSON.stringify(googleResponse()), { status: 200 });
+  });
+  try {
+    await withServer(baseConfig, async (baseUrl) => {
+      for (const organization of [undefined, '', '   ', ' Example Company ']) {
+        const res = await postAddress(baseUrl, { ...validBody, organization });
+        assert.equal(res.status, 200);
+        const upstream = upstreamAddresses.at(-1);
+        if (organization?.trim()) {
+          assert.equal(upstream.organization, 'Example Company');
+        } else {
+          assert.equal(Object.hasOwn(upstream, 'organization'), false);
+        }
+      }
+      const res = await postAddress(baseUrl, { ...validBody, organization: 123 });
+      assert.equal(res.status, 400);
+      assert.equal(upstreamAddresses.length, 4);
     });
   } finally {
     restore();

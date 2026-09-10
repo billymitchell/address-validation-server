@@ -52,9 +52,10 @@ function mapPostalAddress(postalAddress, formattedAddress) {
 
 function normalizeResult(result) {
   const verdict = result?.verdict ?? {};
+  const address = result?.address;
   return {
     status: deriveStatus(verdict),
-    suggestedAddress: mapPostalAddress(result?.postalAddress, result?.formattedAddress),
+    suggestedAddress: mapPostalAddress(address?.postalAddress, address?.formattedAddress),
     verdict: {
       addressComplete: verdict.addressComplete ?? false,
       validationGranularity: verdict.validationGranularity ?? 'OTHER',
@@ -62,8 +63,38 @@ function normalizeResult(result) {
       hasInferredComponents: verdict.hasInferredComponents ?? false,
       hasReplacedComponents: verdict.hasReplacedComponents ?? false,
     },
-    messages: buildMessages(verdict, result?.addressComponents),
+    messages: buildMessages(verdict, address?.addressComponents),
   };
+}
+
+const GOOGLE_ERROR_MESSAGES = {
+  SERVICE_DISABLED: 'Google Address Validation API is not enabled for the server project.',
+  BILLING_DISABLED: 'Billing is not enabled for the Google Address Validation project.',
+  API_KEY_INVALID: 'The server Google API key is invalid.',
+  API_KEY_SERVICE_BLOCKED: 'The server Google API key does not allow Address Validation API requests.',
+  API_KEY_HTTP_REFERRER_BLOCKED: 'The server Google API key has incompatible HTTP referrer restrictions.',
+  API_KEY_IP_ADDRESS_BLOCKED: 'The server Google API key does not allow requests from this server IP.',
+};
+
+async function upstreamError(response) {
+  const payload = await response.json().catch(() => null);
+  const details = payload?.error?.details;
+  const reason = Array.isArray(details) && details
+    .map((detail) => detail?.reason)
+    .find((value) => typeof value === 'string' && Object.hasOwn(GOOGLE_ERROR_MESSAGES, value));
+  // Never log Google's raw message or metadata: these can contain keys or addresses.
+  console.error('Google Address Validation request failed:', {
+    httpStatus: response.status,
+    reason: reason || 'UNKNOWN',
+  });
+  let message = reason && GOOGLE_ERROR_MESSAGES[reason];
+  if (!message) {
+    if (response.status === 400) message = 'Google rejected the address validation request.';
+    else if (response.status === 401 || response.status === 403) message = 'Google denied the address validation request. Check the server API key, API access, and billing.';
+    else if (response.status === 429) message = 'Google Address Validation quota or rate limit was exceeded. Try again later.';
+    else message = 'Address validation service returned an error.';
+  }
+  return new ApiError(502, message);
 }
 
 export async function validateAddress(address, { apiKey, timeoutMs }) {
@@ -88,7 +119,7 @@ export async function validateAddress(address, { apiKey, timeoutMs }) {
   }
 
   if (!response.ok) {
-    throw new ApiError(502, 'Address validation service returned an error.');
+    throw await upstreamError(response);
   }
 
   const payload = await response.json();

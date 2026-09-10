@@ -5,7 +5,7 @@ import { runInNewContext } from 'node:vm';
 
 const script = readFileSync(new URL('../address-validation.js', import.meta.url), 'utf8');
 
-function checkout(countryValue, regionAttribute, suggestedRegion) {
+function checkout(countryValue, regionAttribute, suggestedRegion, companyValue) {
   const handlers = {};
   const requests = [];
   const errors = [];
@@ -41,6 +41,9 @@ function checkout(countryValue, regionAttribute, suggestedRegion) {
       getElementById(id) {
         if (id === 'checkout-form') return form;
         if (id.endsWith('_country')) return country;
+        if (id.endsWith('_company') && companyValue !== undefined) {
+          return { value: companyValue, addEventListener() {} };
+        }
         if (id.endsWith('_first_address')) return { value: '123 Main St', addEventListener() {} };
         return null;
       },
@@ -89,6 +92,18 @@ test('explicit region attribute takes precedence and is normalized', async () =>
   const page = checkout('Custom country name', ' ca ');
   await page.submit();
   assert.equal(page.requests[0].regionCode, 'CA');
+});
+
+test('frontend omits a missing or blank company and includes a supplied company', async () => {
+  for (const company of [undefined, '', '   ', ' Example Company ']) {
+    const page = checkout('United States', undefined, undefined, company);
+    await page.submit();
+    if (company?.trim()) {
+      assert.equal(page.requests[0].organization, 'Example Company');
+    } else {
+      assert.equal(Object.hasOwn(page.requests[0], 'organization'), false);
+    }
+  }
 });
 
 test('unknown or empty countries are rejected without an API call', async () => {

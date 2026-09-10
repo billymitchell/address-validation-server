@@ -306,9 +306,11 @@
       addressLines: [valueOf(fields.addressLine1), valueOf(fields.addressLine2)].filter(Boolean),
       locality: valueOf(fields.city),
       administrativeArea: valueOf(fields.state),
-      postalCode: valueOf(fields.postalCode),
-      organization: valueOf(fields.company)
+      postalCode: valueOf(fields.postalCode)
     };
+
+    var organization = valueOf(fields.company);
+    if (organization) address.organization = organization;
 
     currentAddress = address;
     console.log('Address state updated:', address);
