@@ -6,11 +6,11 @@ import { runInNewContext } from 'node:vm';
 const script = readFileSync(new URL('../address-validation.js', import.meta.url), 'utf8');
 const storefront = JSON.parse(readFileSync(new URL('./fixtures/storefront-regions.json', import.meta.url), 'utf8'));
 
-function checkout(countryValue, regionAttribute, suggestedRegion, companyValue, suggestedPostalCode, stateConfig = {}) {
+function checkout(countryValue, regionAttribute, suggestedRegion, companyValue, suggestedPostalCode, stateConfig = {}, fieldOverrides = {}) {
   const handlers = {};
   const requests = [];
   const errors = [];
-  const zip = { value: '20191', addEventListener() {} };
+  const zip = { value: fieldOverrides.zip ?? '20191', addEventListener() {} };
   const option = (value, code) => ({ value, textContent: value, getAttribute: () => code });
   const changes = [];
   let state = {
@@ -68,7 +68,15 @@ function checkout(countryValue, regionAttribute, suggestedRegion, companyValue, 
         if (id.endsWith('_company') && companyValue !== undefined) {
           return { value: companyValue, addEventListener() {} };
         }
-        if (id.endsWith('_first_address')) return { value: '123 Main St', addEventListener() {} };
+        if (id.endsWith('_first_address')) {
+          return { value: fieldOverrides.addressLine1 ?? '123 Main St', addEventListener() {} };
+        }
+        if (id.endsWith('_second_address') && fieldOverrides.addressLine2 !== undefined) {
+          return { value: fieldOverrides.addressLine2, addEventListener() {} };
+        }
+        if (id.endsWith('_city') && fieldOverrides.city !== undefined) {
+          return { value: fieldOverrides.city, addEventListener() {} };
+        }
         return null;
       },
       createElement: (tag) => tag === 'div' ? modal : { dataset: {}, setAttribute() {} },
@@ -314,4 +322,66 @@ test('empty international optional fields are omitted from the request', async (
     assert.equal(Object.hasOwn(page.requests[0], field), false);
   }
   assert.equal(page.submissions, 1);
+});
+
+test('whitespace-only address and blank postal code is rejected without an API call', async () => {
+  for (const blank of ['', '   ', '\t\n']) {
+    const page = checkout('United States', undefined, undefined, undefined, undefined, {}, {
+      addressLine1: blank, addressLine2: blank, city: blank, zip: blank,
+    });
+    await page.submit();
+    assert.equal(page.requests.length, 0);
+    assert.match(page.errors[0].textContent, /Enter an address or postal code/);
+  }
+});
+
+test('a postal-code-only submission is accepted with no address lines', async () => {
+  const page = checkout('United States', undefined, undefined, undefined, undefined, {}, {
+    addressLine1: '   ', addressLine2: '', zip: '20191',
+  });
+  await page.submit();
+  assert.equal(page.requests.length, 1);
+  assert.deepEqual(page.requests[0].addressLines, []);
+  assert.equal(page.requests[0].postalCode, '20191');
+});
+
+test('leading/trailing whitespace is trimmed from every field before submission', async () => {
+  const page = checkout('United States', undefined, undefined, '  Acme Co  ', undefined, {}, {
+    addressLine1: '  123 Main St  ', addressLine2: '  Apt 4  ', city: '  Reston  ', zip: '  20191  ',
+  });
+  await page.submit();
+  const request = page.requests[0];
+  assert.deepEqual(request.addressLines, ['123 Main St', 'Apt 4']);
+  assert.equal(request.locality, 'Reston');
+  assert.equal(request.postalCode, '20191');
+  assert.equal(request.organization, 'Acme Co');
+});
+
+test('a blank second address line is dropped while the first line is kept', async () => {
+  const page = checkout('United States', undefined, undefined, undefined, undefined, {}, {
+    addressLine1: '123 Main St', addressLine2: '   ',
+  });
+  await page.submit();
+  assert.deepEqual(page.requests[0].addressLines, ['123 Main St']);
+});
+
+test('country names resolve regardless of case, internal whitespace, or diacritics', async () => {
+  for (const name of [' UnItEd   StAtEs \t', 'UNITED STATES', '  United States of America  ', 'México', 'MEXICO']) {
+    const page = checkout(name);
+    await page.submit();
+    assert.equal(page.requests.length, 1, name);
+    assert.ok(['US', 'MX'].includes(page.requests[0].regionCode), name);
+  }
+});
+
+test('organization with only whitespace is omitted while surrounding whitespace is trimmed otherwise', async () => {
+  for (const [company, expectedOmitted] of [['   ', true], ['\t\n', true], ['  Acme  ', false]]) {
+    const page = checkout('United States', undefined, undefined, company, undefined, {}, { zip: '20191' });
+    await page.submit();
+    if (expectedOmitted) {
+      assert.equal(Object.hasOwn(page.requests[0], 'organization'), false);
+    } else {
+      assert.equal(page.requests[0].organization, 'Acme');
+    }
+  }
 });
