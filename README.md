@@ -92,6 +92,56 @@ Liveness probe, returns `{ "status": "ok" }`. Not rate-limited or origin-restric
 Suggested ZIP/postal codes have hyphens removed before display and application
 to the form. All digits are retained: `20191-1441` becomes `201911441`.
 
+The comparison displays full country names and resolves state/province codes
+worldwide using bundled Unicode CLDR, Google postal metadata, and Carmen aliases.
+No additional runtime API call or script include is needed for those mappings.
+API requests still use two-letter country codes.
+
+Your storefront's `country_states.js.liquid` / `country_states.js` controls the
+accepted names. When available, the script reads its `country_arr`,
+`get_country_id()`, and `get_states()` helpers at runtime. Load that theme asset
+before this script. Suggestions are matched to the existing dropdown values,
+preserving exact spellings such as `Bayern`, `Yukon Territory`, and
+`North-West (South Africa)`. Applying a suggestion fires change events to refresh
+Select2 and checks the current state field after a country change.
+
+If a storefront populates states asynchronously, an unavailable option is flagged
+for review; submission does not proceed with an unmatched state. The script never
+adds a guessed state option. Exact existing selections are preserved, including
+legacy region names. For custom names not covered by the aliases, a state option
+can explicitly declare its code:
+
+```html
+<option value="New South Wales" data-state-code="AU-NSW">New South Wales</option>
+```
+
+Countries without a state or postal code can leave those optional fields blank.
+Global name conversion does not expand Google's address-validation coverage:
+see [Google's supported regions](https://developers.google.com/maps/documentation/address-validation/coverage).
+
+### Storefront compatibility audit
+
+The [test fixture](test/fixtures/storefront-regions.json) records the exact live
+`country_states.js` URL supplied for this integration and its SHA-256 hash.
+It contains 248 countries and 3,776 state/province entries. The current resolver
+recognizes every country and preserves every existing full state name. Of those
+state entries, 3,720 have a code mapping to an exact storefront value; 56 do not
+have an unambiguous mapping. These include legacy regions, merged regions, and
+spelling variants. Do not treat them as verified automatic conversions.
+
+Inspect [the full audit](reports/storefront-compatibility.json), especially
+`stateEntriesWithoutCodeMapping`, for the exceptions and each country's mappings.
+For example, a modern merged French region may correspond to multiple old
+dropdown options; the shopper must review that case. The theme's original
+country/state data is not modified by this integration.
+
+Run `node scripts/audit-storefront-regions.mjs` to repeat the audit against the
+saved fixture. It does not fetch the live asset; refresh the fixture and its hash
+when that asset changes. Run `python3 scripts/build-address-regions.py` to rebuild
+the bundled mappings from pinned sources (Python 3 and Ruby required only for
+regeneration). Sources, licenses, and modifications are in
+[the data attribution](licenses/address-data.md).
+
 Link to the script through GitHub Pages in your frontend Liquid template and
 configure the API URL on the form:
 
@@ -113,8 +163,9 @@ The script waits until the DOM is ready before initializing.
 
 The script converts the storefront's country names into two-letter `regionCode`
 values for the API (for example, `United States` becomes `US`). It includes all
-249 countries and territories in the storefront dropdown and also accepts
-two-letter option values. The form's country values remain unchanged.
+249 countries and territories in the sample dropdown, supports the legacy names
+in `country_states.js`, and also accepts two-letter option values. The form's
+country values remain unchanged.
 
 For custom or translated country names, add a `data-region-code` attribute
 containing the ISO 3166-1 alpha-2 code. This takes precedence over the option value:

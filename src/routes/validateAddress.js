@@ -27,7 +27,7 @@ function parseAddressInput(body) {
 
   for (const field of OPTIONAL_STRING_FIELDS) {
     if (body[field] !== undefined) {
-      if (field === 'organization' && typeof body[field] === 'string' && body[field].trim() === '') {
+      if (typeof body[field] === 'string' && body[field].trim() === '') {
         continue;
       }
       if (typeof body[field] !== 'string' || body[field].trim() === '') {

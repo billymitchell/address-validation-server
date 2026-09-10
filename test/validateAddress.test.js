@@ -158,6 +158,29 @@ test('returns corrected with messages and suggestion', async () => {
   }
 });
 
+test('international addresses may omit or leave optional locality, state and postal fields blank', async () => {
+  const restore = mockGoogleFetch(async (url, options) => {
+    const address = JSON.parse(options.body).address;
+    assert.equal(address.regionCode, 'HK');
+    for (const field of ['locality', 'administrativeArea', 'postalCode', 'organization']) {
+      assert.equal(Object.hasOwn(address, field), false);
+    }
+    return new Response(JSON.stringify(googleResponse()), { status: 200 });
+  });
+  try {
+    await withServer(baseConfig, async (baseUrl) => {
+      for (const optionalFields of [{}, { locality: '', administrativeArea: ' ', postalCode: '', organization: '' }]) {
+        const response = await postAddress(baseUrl, { regionCode: 'HK', addressLines: ['123 Example Road'], ...optionalFields });
+        assert.equal(response.status, 200);
+      }
+      const invalid = await postAddress(baseUrl, { regionCode: 'HK', addressLines: ['123 Example Road'], administrativeArea: 12 });
+      assert.equal(invalid.status, 400);
+    });
+  } finally {
+    restore();
+  }
+});
+
 test('returns invalid when Google cannot resolve the address', async () => {
   const unresolved = googleResponse({ verdict: { validationGranularity: 'OTHER', addressComplete: false } });
   const restore = mockGoogleFetch(async () => new Response(JSON.stringify(unresolved), { status: 200 }));
