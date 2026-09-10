@@ -5,10 +5,11 @@ import { runInNewContext } from 'node:vm';
 
 const script = readFileSync(new URL('../address-validation.js', import.meta.url), 'utf8');
 
-function checkout(countryValue, regionAttribute, suggestedRegion, companyValue) {
+function checkout(countryValue, regionAttribute, suggestedRegion, companyValue, suggestedPostalCode) {
   const handlers = {};
   const requests = [];
   const errors = [];
+  const zip = { value: '20191', addEventListener() {} };
   const option = (value, code) => ({ value, getAttribute: () => code });
   const country = {
     value: countryValue,
@@ -41,6 +42,7 @@ function checkout(countryValue, regionAttribute, suggestedRegion, companyValue) 
       getElementById(id) {
         if (id === 'checkout-form') return form;
         if (id.endsWith('_country')) return country;
+        if (id.endsWith('_zip')) return zip;
         if (id.endsWith('_company') && companyValue !== undefined) {
           return { value: companyValue, addEventListener() {} };
         }
@@ -56,14 +58,18 @@ function checkout(countryValue, regionAttribute, suggestedRegion, companyValue) 
       requests.push(address);
       return {
         ok: true,
-        json: async () => suggestedRegion
-          ? { status: 'corrected', suggestedAddress: { ...address, regionCode: suggestedRegion } }
+        json: async () => suggestedRegion || suggestedPostalCode !== undefined
+          ? { status: 'corrected', suggestedAddress: {
+            ...address,
+            regionCode: suggestedRegion || address.regionCode,
+            postalCode: suggestedPostalCode ?? address.postalCode,
+          } }
           : { status: 'confirmed' },
       };
     },
   });
   return {
-    country, requests, errors, modalNodes,
+    country, zip, requests, errors, modalNodes,
     async submit() {
       handlers.submit({ preventDefault() {} });
       await new Promise((resolve) => setImmediate(resolve));
@@ -120,4 +126,24 @@ test('accepting a suggested country selects the corresponding full-name option',
   await page.submit();
   page.modalNodes['[data-use-updated]'].click();
   assert.equal(page.country.value, 'Canada');
+});
+
+test('suggested ZIP displays and applies all digits without a dash', async () => {
+  for (const suggestedZip of ['20191-1441', '201911441', '20190']) {
+    const page = checkout('United States', undefined, undefined, undefined, suggestedZip);
+    await page.submit();
+    const expected = suggestedZip.replace(/-/g, '');
+    assert.ok(page.modalNodes['[data-suggested-address]'].textContent.includes(expected));
+    assert.ok(!page.modalNodes['[data-suggested-address]'].textContent.includes('-'));
+    page.modalNodes['[data-use-updated]'].click();
+    assert.equal(page.zip.value, expected);
+  }
+});
+
+test('choosing the previous address preserves the original ZIP', async () => {
+  const page = checkout('United States', undefined, undefined, undefined, '20191-1441');
+  page.zip.value = '20191-1000';
+  await page.submit();
+  page.modalNodes['[data-use-previous]'].click();
+  assert.equal(page.zip.value, '20191-1000');
 });

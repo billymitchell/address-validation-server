@@ -493,6 +493,11 @@
       }
 
       var suggested = result.suggestedAddress || original;
+      if (result.suggestedAddress && typeof suggested.postalCode === 'string') {
+        suggested = Object.assign({}, suggested, {
+          postalCode: suggested.postalCode.replace(/-/g, '')
+        });
+      }
 
       if (result.status === 'corrected' && !addressesMatch(original, suggested)) {
         createSuggestionModal(original, suggested);

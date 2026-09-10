@@ -89,6 +89,9 @@ Liveness probe, returns `{ "status": "ok" }`. Not rate-limited or origin-restric
 3. Applies either **Use updated address** or **Continue with previous address** to
    the existing form, then resumes the form's native submission.
 
+Suggested ZIP/postal codes have hyphens removed before display and application
+to the form. All digits are retained: `20191-1441` becomes `201911441`.
+
 Link to the script through GitHub Pages in your frontend Liquid template and
 configure the API URL on the form:
 
