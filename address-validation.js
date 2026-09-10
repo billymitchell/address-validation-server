@@ -1,5 +1,10 @@
-(function () {
+(function initializeAddressValidation() {
   'use strict';
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initializeAddressValidation, { once: true });
+    return;
+  }
 
   var form = document.getElementById('checkout-form');
   if (!form) return;
