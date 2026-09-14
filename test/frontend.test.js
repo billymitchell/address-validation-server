@@ -10,6 +10,7 @@ function checkout(countryValue, regionAttribute, suggestedRegion, companyValue, 
   const handlers = {};
   const requests = [];
   const errors = [];
+  const hintNodes = [];
   const zip = { value: fieldOverrides.zip ?? '20191', addEventListener() {} };
   const option = (value, code) => ({ value, textContent: value, getAttribute: () => code });
   const changes = [];
@@ -69,7 +70,11 @@ function checkout(countryValue, regionAttribute, suggestedRegion, companyValue, 
           return { value: companyValue, addEventListener() {} };
         }
         if (id.endsWith('_first_address')) {
-          return { value: fieldOverrides.addressLine1 ?? '123 Main St', addEventListener() {} };
+          return {
+            value: fieldOverrides.addressLine1 ?? '123 Main St',
+            addEventListener() {},
+            parentNode: { appendChild: (element) => hintNodes.push(element) },
+          };
         }
         if (id.endsWith('_second_address') && fieldOverrides.addressLine2 !== undefined) {
           return { value: fieldOverrides.addressLine2, addEventListener() {} };
@@ -101,6 +106,7 @@ function checkout(countryValue, regionAttribute, suggestedRegion, companyValue, 
   });
   return {
     country, zip, get state() { return state; }, get submissions() { return submissions; }, changes, requests, errors, modalNodes,
+    get companyHint() { return hintNodes.at(-1); },
     async submit() {
       handlers.submit({ preventDefault() {} });
       await new Promise((resolve) => setImmediate(resolve));
@@ -384,4 +390,36 @@ test('organization with only whitespace is omitted while surrounding whitespace 
       assert.equal(page.requests[0].organization, 'Acme');
     }
   }
+});
+
+// --- Company-in-address-line-1 inline hint ----------------------------------------
+
+test('shows an inline hint when a company name looks like it was entered in address line 1', () => {
+  const page = checkout('United States', undefined, undefined, undefined, undefined, {}, {
+    addressLine1: 'Acme Corporation', addressLine2: '1600 Amphitheatre Pkwy',
+  });
+  assert.equal(page.companyHint.textContent, 'This looks like a company name. Did you mean to enter it in the Company field instead of Address line 1?');
+});
+
+test('does not show the hint when the Company field is already filled in', () => {
+  const page = checkout('United States', undefined, undefined, 'Acme Corporation', undefined, {}, {
+    addressLine1: 'Acme Corporation', addressLine2: '1600 Amphitheatre Pkwy',
+  });
+  assert.equal(page.companyHint.textContent, '');
+});
+
+test('does not show the hint for an ordinary two-line address', () => {
+  const page = checkout('United States', undefined, undefined, undefined, undefined, {}, {
+    addressLine1: '123 Main St', addressLine2: 'Apt 4',
+  });
+  assert.equal(page.companyHint.textContent, '');
+});
+
+test('the hint never blocks form submission', async () => {
+  const page = checkout('United States', undefined, undefined, undefined, undefined, {}, {
+    addressLine1: 'Acme Corporation', addressLine2: '1600 Amphitheatre Pkwy',
+  });
+  assert.ok(page.companyHint.textContent.length > 0);
+  await page.submit();
+  assert.equal(page.submissions, 1);
 });

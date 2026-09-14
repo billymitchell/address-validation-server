@@ -134,6 +134,36 @@ test('organization is optional and blank values are omitted from the upstream re
   }
 });
 
+test('accepts a company name mistakenly entered in addressLines[0] with the street moved to addressLines[1] and organization left blank', async () => {
+  // Common customer mistake: company name goes in "address line 1", their actual
+  // street address gets pushed down to "address line 2", and the organization
+  // field is left empty. The API has no way to detect this semantically, so it
+  // should simply forward the lines through unchanged rather than rejecting them.
+  const upstreamAddresses = [];
+  const restore = mockGoogleFetch(async (url, options) => {
+    upstreamAddresses.push(JSON.parse(options.body).address);
+    return new Response(JSON.stringify(googleResponse()), { status: 200 });
+  });
+  try {
+    await withServer(baseConfig, async (baseUrl) => {
+      const res = await postAddress(baseUrl, {
+        ...validBody,
+        addressLines: ['Acme Corporation', '1600 Amphitheatre Pkwy'],
+        organization: '',
+      });
+      assert.equal(res.status, 200);
+      const body = await res.json();
+      assert.equal(body.status, 'confirmed');
+
+      const upstream = upstreamAddresses.at(-1);
+      assert.deepEqual(upstream.addressLines, ['Acme Corporation', '1600 Amphitheatre Pkwy']);
+      assert.equal(Object.hasOwn(upstream, 'organization'), false);
+    });
+  } finally {
+    restore();
+  }
+});
+
 test('returns corrected with messages and suggestion', async () => {
   const corrected = googleResponse({
     verdict: { hasReplacedComponents: true },

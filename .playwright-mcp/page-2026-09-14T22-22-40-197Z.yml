@@ -1,0 +1,64 @@
+- generic [ref=e2]:
+  - heading "Shipping Address" [level=2] [ref=e3]
+  - generic [ref=e4]:
+    - text: Saved Address
+    - combobox [ref=e5]:
+      - option "Choose Address..." [disabled] [selected]
+      - 'option "order #1 shipping address"'
+  - heading "Personal Information" [level=4] [ref=e6]
+  - generic [ref=e7]:
+    - generic [ref=e8]: First name(required)
+    - textbox "First name(required)" [ref=e9]:
+      - /placeholder: First name
+      - text: Billy
+  - generic [ref=e10]:
+    - generic [ref=e11]: Last name(required)
+    - textbox "Last name(required)" [ref=e12]:
+      - /placeholder: Last name
+      - text: Mitchell
+  - generic [ref=e13]:
+    - generic [ref=e14]: Email Address(required)
+    - textbox "Email Address(required)" [ref=e15]:
+      - /placeholder: Email Address
+      - text: wmitchell@centricitynow.com
+  - generic [ref=e16]:
+    - generic [ref=e17]: Phone(required)
+    - textbox "Phone(required)" [ref=e18]:
+      - /placeholder: Phone
+      - text: "4437658265"
+  - generic [ref=e19]:
+    - text: Company
+    - textbox "Company" [ref=e20]
+  - heading "Shipping Address" [level=4] [ref=e21]
+  - generic [ref=e22]:
+    - generic [ref=e23]: Address(required)
+    - textbox "Address(required)" [ref=e24]:
+      - /placeholder: Address line 1
+      - text: 415 Charter Oak Ave
+    - textbox "Address line 2" [ref=e25]
+  - generic [ref=e26]:
+    - generic [ref=e27]: City(required)
+    - textbox "City(required)" [ref=e28]:
+      - /placeholder: City
+      - text: Baltimore
+  - generic [ref=e29]:
+    - generic [ref=e30]: Country(required)
+    - generic [ref=e31]:
+      - combobox [aria-hidden] [ref=e32]
+      - combobox [ref=e35]:
+        - textbox "United States" [ref=e36]
+  - generic [ref=e37]:
+    - generic [ref=e38]: State(required)
+    - generic [ref=e39]:
+      - combobox [aria-hidden] [ref=e40]
+      - combobox [ref=e43]:
+        - textbox "Maryland" [ref=e44]
+  - generic [ref=e45]:
+    - generic [ref=e46]: Zip code(required)
+    - textbox "Zip code(required)" [ref=e47]:
+      - /placeholder: Zip code
+      - text: "21212"
+  - generic [ref=e48]:
+    - checkbox "Save my Address Information" [checked] [ref=e49]
+    - text: Save my Address Information
+  - button "Continue" [ref=e50]

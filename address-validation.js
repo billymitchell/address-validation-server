@@ -648,7 +648,58 @@
 
     currentAddress = address;
     console.log('Address state updated:', address);
+    updateCompanyHint();
     return address;
+  }
+
+  // --- Company-in-address-line-1 hint ------------------------------------------------
+  // Best-effort, non-blocking signal: customers sometimes enter their company name in
+  // "Address line 1" and push their real street address down to "Address line 2",
+  // leaving the Company field blank. There's no way to detect this with certainty, so
+  // this only powers an inline suggestion under the address fields and never blocks
+  // or alters submission.
+  var STARTS_WITH_NUMBER = /^\d+[\w-]*(\s|$)/;
+  var STREET_SUFFIX = /\b(st|street|ave|avenue|blvd|boulevard|rd|road|dr|drive|ln|lane|way|pkwy|parkway|ct|court|ter|terrace|hwy|highway|cir|circle|pl|place|suite|ste|unit|apt|#)\b/i;
+  var COMPANY_SUFFIX = /\b(inc|incorporated|llc|ltd|limited|corp|corporation|co|company|group|llp|plc|enterprises|industries|holdings|partners|associates)\b/i;
+
+  function looksLikeCompanyName(line) {
+    return Boolean(line) && (COMPANY_SUFFIX.test(line) || !STARTS_WITH_NUMBER.test(line));
+  }
+
+  function looksLikeStreetLine(line) {
+    return Boolean(line) && STARTS_WITH_NUMBER.test(line) && STREET_SUFFIX.test(line);
+  }
+
+  var companyHintEl;
+
+  function ensureCompanyHint() {
+    if (companyHintEl) return companyHintEl;
+    if (!fields.addressLine1 || !fields.addressLine1.parentNode) return null;
+
+    var style = document.createElement('style');
+    style.textContent = '.address-validation-hint{display:block;margin-top:.35rem;font-size:.85rem;color:#a15c00}'
+      + '.address-validation-hint:empty{display:none}';
+    document.head.appendChild(style);
+
+    companyHintEl = document.createElement('small');
+    companyHintEl.className = 'address-validation-hint';
+    companyHintEl.setAttribute('aria-live', 'polite');
+    fields.addressLine1.parentNode.appendChild(companyHintEl);
+    return companyHintEl;
+  }
+
+  function updateCompanyHint() {
+    var hint = ensureCompanyHint();
+    if (!hint) return;
+
+    var line1 = valueOf(fields.addressLine1);
+    var line2 = valueOf(fields.addressLine2);
+    var company = valueOf(fields.company);
+    var suspicious = !company && looksLikeCompanyName(line1) && looksLikeStreetLine(line2);
+
+    hint.textContent = suspicious
+      ? 'This looks like a company name. Did you mean to enter it in the Company field instead of Address line 1?'
+      : '';
   }
 
   function showLoader() {
