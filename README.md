@@ -95,8 +95,8 @@ Example response:
 
 - `confirmed` — address is complete and verified
 - `corrected` — the provider corrected components; show `suggestedAddress` for confirmation
-- `unconfirmed` — some components couldn't be confirmed; review `messages`
-- `invalid` — address could not be resolved to a deliverable location
+- `unconfirmed` — some components couldn't be confirmed; the checkout warns and lets the shopper review or choose whether to continue
+- `invalid` — address could not be resolved to a deliverable location; the checkout warns and asks the shopper to review or explicitly continue
 
 ### `GET /health`
 
@@ -119,10 +119,18 @@ Liveness probe, returns `{ "status": "ok" }`. Not rate-limited or origin-restric
 `address-validation.js` intercepts the sample checkout form's Continue action. It:
 
 1. Prevents the normal submission while the address is validated.
-2. Shows the previously entered and suggested addresses side by side when Google
-   returns a correction.
-3. Applies either **Use updated address** or **Continue with previous address** to
-   the existing form, then resumes the form's native submission.
+2. Shows the entered and suggested addresses when a provider returns a correction.
+   For `unconfirmed` or `invalid` results, it warns the shopper and offers review,
+   explicit continuation with the entered address, or the candidate suggestion when
+   one is available.
+3. Applies the shopper's selected address to the existing form, then resumes its
+   native submission.
+
+The form also reminds shoppers to include apartment, suite, unit, floor, or building
+details when applicable. It gives U.S.-specific ZIP format guidance, uses country-neutral
+postal-code guidance elsewhere, and warns without blocking when a street address and
+PO Box are both entered. It also retains a non-blocking hint for a likely company name
+in Address Line 1. These hints do not replace provider validation or carrier checks.
 
 Suggested ZIP/postal codes have hyphens removed before display and application
 to the form. All digits are retained: `20191-1441` becomes `201911441`.

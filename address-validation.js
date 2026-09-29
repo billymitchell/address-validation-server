@@ -671,21 +671,57 @@
   }
 
   var companyHintEl;
+  var unitHintEl;
+  var zipHintEl;
+  var addressFormatHintEl;
+
+  function ensureHint(parent, className) {
+    if (!parent) return null;
+    if (!document.getElementById('address-validation-hint-styles')) {
+      var style = document.createElement('style');
+      style.id = 'address-validation-hint-styles';
+      style.textContent = '.address-validation-hint{display:block;margin-top:.35rem;font-size:.85rem;color:#a15c00}'
+        + '.address-validation-hint--info{color:#555}'
+        + '.address-validation-hint:empty{display:none}';
+      document.head.appendChild(style);
+    }
+
+    var hint = document.createElement('small');
+    hint.className = className;
+    hint.setAttribute('aria-live', 'polite');
+    parent.appendChild(hint);
+    return hint;
+  }
 
   function ensureCompanyHint() {
-    if (companyHintEl) return companyHintEl;
-    if (!fields.addressLine1 || !fields.addressLine1.parentNode) return null;
-
-    var style = document.createElement('style');
-    style.textContent = '.address-validation-hint{display:block;margin-top:.35rem;font-size:.85rem;color:#a15c00}'
-      + '.address-validation-hint:empty{display:none}';
-    document.head.appendChild(style);
-
-    companyHintEl = document.createElement('small');
-    companyHintEl.className = 'address-validation-hint';
-    companyHintEl.setAttribute('aria-live', 'polite');
-    fields.addressLine1.parentNode.appendChild(companyHintEl);
+    if (!companyHintEl && fields.addressLine1) {
+      companyHintEl = ensureHint(fields.addressLine1.parentNode, 'address-validation-hint address-validation-hint--company');
+    }
     return companyHintEl;
+  }
+
+  function ensureUnitHint() {
+    if (!unitHintEl && fields.addressLine2) {
+      unitHintEl = ensureHint(fields.addressLine2.parentNode, 'address-validation-hint address-validation-hint--info');
+      if (unitHintEl) {
+        unitHintEl.textContent = 'Apartment, suite, unit, floor, or building details (if applicable).';
+      }
+    }
+    return unitHintEl;
+  }
+
+  function ensurePostalCodeHint() {
+    if (!zipHintEl && fields.postalCode) {
+      zipHintEl = ensureHint(fields.postalCode.parentNode, 'address-validation-hint address-validation-hint--info');
+    }
+    return zipHintEl;
+  }
+
+  function ensureAddressFormatHint() {
+    if (!addressFormatHintEl && fields.addressLine1) {
+      addressFormatHintEl = ensureHint(fields.addressLine1.parentNode, 'address-validation-hint address-validation-hint--warning');
+    }
+    return addressFormatHintEl;
   }
 
   function updateCompanyHint() {
@@ -700,6 +736,34 @@
     hint.textContent = suspicious
       ? 'This looks like a company name. Did you mean to enter it in the Company field instead of Address line 1?'
       : '';
+  }
+
+  function updateAddressHints() {
+    updateCompanyHint();
+    ensureUnitHint();
+
+    var zipHint = ensurePostalCodeHint();
+    if (zipHint) {
+      var postalCode = valueOf(fields.postalCode);
+      var isUs = getCountryCode() === 'US';
+      if (isUs) {
+        zipHint.textContent = postalCode && !/^\d{5}(?:-\d{4})?$/.test(postalCode)
+          ? 'U.S. ZIP codes are usually 5 digits or ZIP+4 (12345-6789). Check the entry; validation will still continue.'
+          : '';
+      } else {
+        zipHint.textContent = 'Enter the postal code using the format used in this country.';
+      }
+    }
+
+    var formatHint = ensureAddressFormatHint();
+    if (formatHint) {
+      var lines = [valueOf(fields.addressLine1), valueOf(fields.addressLine2)].filter(Boolean);
+      var hasPoBox = lines.some(function (line) { return /\bP\.?\s*O\.?\s*Box\b/i.test(line); });
+      var hasStreetAddress = lines.some(function (line) { return looksLikeStreetLine(line); });
+      formatHint.textContent = hasPoBox && hasStreetAddress
+        ? 'This includes both a PO Box and a street address. Confirm the shipping method accepts this combination.'
+        : '';
+    }
   }
 
   function showLoader() {
@@ -810,7 +874,8 @@
     }
   }
 
-  function createSuggestionModal(original, suggested) {
+  function createResultModal(original, suggested, status, messages) {
+    var hasSuggestion = suggested && !addressesMatch(original, suggested);
     var modal = document.createElement('div');
     modal.className = 'address-validation-modal';
     modal.setAttribute('role', 'dialog');
@@ -820,21 +885,32 @@
     modal.innerHTML = [
       '<div class="address-validation-backdrop"></div>',
       '<div class="address-validation-dialog">',
-      '  <h2 id="address-validation-title">Confirm your address</h2>',
-      '  <p>We found a possible update. Which address would you like to use?</p>',
+      '  <h2 id="address-validation-title">' + (status === 'corrected' ? 'Confirm your address' : 'Review your address') + '</h2>',
+      '  <p data-validation-message></p>',
       '  <div class="address-validation-comparison">',
       '    <section><h3>Previously entered</h3><pre data-original-address></pre></section>',
-      '    <section><h3>Suggested address</h3><pre data-suggested-address></pre></section>',
+      '    <section data-suggested-section><h3>Suggested address</h3><pre data-suggested-address></pre></section>',
       '  </div>',
       '  <div class="address-validation-actions">',
-      '    <button type="button" data-use-previous>Continue with previous address</button>',
-      '    <button type="button" data-use-updated class="primary">Use updated address</button>',
+      '    <button type="button" data-review-address>Go back and review</button>',
+      '    <button type="button" data-use-previous>Continue with entered address</button>',
+      '    <button type="button" data-use-updated class="primary">Use suggested address</button>',
       '  </div>',
       '</div>'
     ].join('');
 
+    var message = messages && messages.length
+      ? messages.join(' ')
+      : (status === 'corrected'
+        ? 'We found a possible update. Choose which address to use.'
+        : 'The address could not be fully confirmed. Review it before continuing.');
+    modal.querySelector('[data-validation-message]').textContent = message;
     modal.querySelector('[data-original-address]').textContent = displayAddress(original);
-    modal.querySelector('[data-suggested-address]').textContent = displayAddress(suggested);
+    modal.querySelector('[data-suggested-section]').hidden = !hasSuggestion;
+    if (hasSuggestion) {
+      modal.querySelector('[data-suggested-address]').textContent = displayAddress(suggested);
+    }
+    modal.querySelector('[data-use-updated]').hidden = !hasSuggestion;
     document.body.appendChild(modal);
 
     var closeAndContinue = function (selectedAddress) {
@@ -846,15 +922,21 @@
       closeAndContinue(original);
     });
 
-    modal.querySelector('[data-use-updated]').addEventListener('click', function () {
-      closeAndContinue(suggested);
+    if (hasSuggestion) {
+      modal.querySelector('[data-use-updated]').addEventListener('click', function () {
+        closeAndContinue(suggested);
+      });
+    }
+
+    modal.querySelector('[data-review-address]').addEventListener('click', function () {
+      modal.remove();
     });
 
     modal.querySelector('.address-validation-backdrop').addEventListener('click', function () {
-      modal.querySelector('[data-use-previous]').focus();
+      modal.querySelector('[data-review-address]').focus();
     });
 
-    modal.querySelector('[data-use-updated]').focus();
+    (hasSuggestion ? modal.querySelector('[data-use-updated]') : modal.querySelector('[data-review-address]')).focus();
 
     var style = document.getElementById('address-validation-styles');
     if (!style) {
@@ -911,8 +993,14 @@
         });
       }
 
-      if (result.status === 'corrected' && !addressesMatch(original, suggested)) {
-        createSuggestionModal(original, suggested);
+      if (result.status === 'corrected') {
+        if (!addressesMatch(original, suggested)) {
+          createResultModal(original, suggested, result.status, result.messages);
+        } else {
+          continueWith(original);
+        }
+      } else if (result.status === 'unconfirmed' || result.status === 'invalid') {
+        createResultModal(original, result.suggestedAddress ? suggested : null, result.status, result.messages);
       } else {
         continueWith(original);
       }
@@ -939,9 +1027,11 @@
     inputs.forEach(function (input) {
       input.addEventListener('input', function () {
         readAddress();
+        updateAddressHints();
       });
       input.addEventListener('change', function () {
         readAddress();
+        updateAddressHints();
       });
     });
   }
@@ -954,4 +1044,5 @@
 
   bindAddressChangeListeners();
   readAddress();
+  updateAddressHints();
 })();

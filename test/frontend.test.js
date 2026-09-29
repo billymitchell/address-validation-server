@@ -11,7 +11,11 @@ function checkout(countryValue, regionAttribute, suggestedRegion, companyValue, 
   const requests = [];
   const errors = [];
   const hintNodes = [];
-  const zip = { value: fieldOverrides.zip ?? '20191', addEventListener() {} };
+  const zip = {
+    value: fieldOverrides.zip ?? '20191',
+    addEventListener() {},
+    parentNode: { appendChild: (element) => hintNodes.push(element) },
+  };
   const option = (value, code) => ({ value, textContent: value, getAttribute: () => code });
   const changes = [];
   let state = {
@@ -43,9 +47,11 @@ function checkout(countryValue, regionAttribute, suggestedRegion, companyValue, 
   const modalNodes = {};
   const modal = {
     setAttribute() {},
-    remove() {},
+    remove() { this.removed = true; },
     querySelector(selector) {
       return modalNodes[selector] ||= {
+        textContent: '',
+        hidden: false,
         focus() {},
         addEventListener(name, callback) { this[name] = callback; },
       };
@@ -76,8 +82,12 @@ function checkout(countryValue, regionAttribute, suggestedRegion, companyValue, 
             parentNode: { appendChild: (element) => hintNodes.push(element) },
           };
         }
-        if (id.endsWith('_second_address') && fieldOverrides.addressLine2 !== undefined) {
-          return { value: fieldOverrides.addressLine2, addEventListener() {} };
+        if (id.endsWith('_second_address')) {
+          return {
+            value: fieldOverrides.addressLine2 ?? '',
+            addEventListener() {},
+            parentNode: { appendChild: (element) => hintNodes.push(element) },
+          };
         }
         if (id.endsWith('_city') && fieldOverrides.city !== undefined) {
           return { value: fieldOverrides.city, addEventListener() {} };
@@ -93,20 +103,32 @@ function checkout(countryValue, regionAttribute, suggestedRegion, companyValue, 
       requests.push(address);
       return {
         ok: true,
-        json: async () => suggestedRegion || suggestedPostalCode !== undefined || stateConfig.suggested !== undefined
-          ? { status: 'corrected', suggestedAddress: {
+        json: async () => {
+          const hasSuggestion = suggestedRegion || suggestedPostalCode !== undefined || stateConfig.suggested !== undefined;
+          const suggestedAddress = hasSuggestion ? {
             ...address,
             regionCode: suggestedRegion || address.regionCode,
             postalCode: suggestedPostalCode ?? address.postalCode,
             administrativeArea: stateConfig.suggested ?? address.administrativeArea,
-          } }
-          : { status: 'confirmed' },
+          } : undefined;
+          if (stateConfig.resultStatus) {
+            return {
+              status: stateConfig.resultStatus,
+              messages: stateConfig.resultMessages || ['Please review your address.'],
+              ...(suggestedAddress ? { suggestedAddress } : {}),
+            };
+          }
+          return suggestedAddress
+            ? { status: 'corrected', suggestedAddress }
+            : { status: 'confirmed' };
+        },
       };
     },
   });
   return {
     country, zip, get state() { return state; }, get submissions() { return submissions; }, changes, requests, errors, modalNodes,
-    get companyHint() { return hintNodes.at(-1); },
+    get companyHint() { return hintNodes.find((hint) => hint.className.includes('address-validation-hint--company')); },
+    get hints() { return hintNodes; },
     async submit() {
       handlers.submit({ preventDefault() {} });
       await new Promise((resolve) => setImmediate(resolve));
@@ -183,6 +205,53 @@ test('choosing the previous address preserves the original ZIP', async () => {
   await page.submit();
   page.modalNodes['[data-use-previous]'].click();
   assert.equal(page.zip.value, '20191-1000');
+});
+
+test('unconfirmed results warn and let the shopper continue with the original address', async () => {
+  const page = checkout('United States', undefined, undefined, undefined, undefined, {
+    resultStatus: 'unconfirmed',
+    resultMessages: ['Unit number could not be confirmed.'],
+  });
+  await page.submit();
+
+  assert.equal(page.submissions, 0);
+  assert.equal(page.modalNodes['[data-validation-message]'].textContent, 'Unit number could not be confirmed.');
+  assert.equal(page.modalNodes['[data-use-updated]'].hidden, true);
+  page.modalNodes['[data-use-previous]'].click();
+  assert.equal(page.submissions, 1);
+});
+
+test('invalid result with a candidate lets the shopper choose candidate or review', async () => {
+  const page = checkout('United States', undefined, undefined, undefined, '20192', {
+    resultStatus: 'invalid',
+    resultMessages: ['The address could not be verified.'],
+    suggested: 'VA',
+    value: 'Virginia',
+    options: [['Virginia']],
+  });
+  await page.submit();
+
+  assert.equal(page.submissions, 0);
+  assert.equal(page.modalNodes['[data-use-updated]'].hidden, false);
+  page.modalNodes['[data-review-address]'].click();
+  assert.equal(page.modalNodes['[data-validation-message]'].textContent, 'The address could not be verified.');
+  assert.equal(page.submissions, 0);
+  assert.equal(page.state.value, 'Virginia');
+});
+
+test('shopper can explicitly accept a candidate for an invalid result', async () => {
+  const page = checkout('United States', undefined, undefined, undefined, '20192', {
+    resultStatus: 'invalid',
+    resultMessages: ['The address could not be verified.'],
+    suggested: 'VA',
+    value: 'Maryland',
+    options: [['Maryland'], ['Virginia']],
+  });
+  await page.submit();
+
+  page.modalNodes['[data-use-updated]'].click();
+  assert.equal(page.state.value, 'Virginia');
+  assert.equal(page.submissions, 1);
 });
 
 test('suggestions show and apply full US state and country names', async () => {
@@ -443,4 +512,61 @@ test('the hint never blocks form submission', async () => {
   assert.ok(page.companyHint.textContent.length > 0);
   await page.submit();
   assert.equal(page.submissions, 1);
+});
+
+test('shows unit-entry guidance without requiring an apartment or suite', () => {
+  const page = checkout('United States', undefined, undefined, undefined, undefined, {}, {
+    addressLine1: '123 Main St',
+    addressLine2: '',
+  });
+  assert.ok(page.hints.some((hint) => hint.textContent.includes('Apartment, suite, unit')));
+});
+
+test('warns for malformed US ZIP formats but does not block submission', async () => {
+  const page = checkout('United States', undefined, undefined, undefined, undefined, {}, {
+    zip: '12A4',
+  });
+  const zipHint = page.hints.find((hint) => hint.textContent.includes('U.S. ZIP codes'));
+  assert.ok(zipHint);
+  await page.submit();
+  assert.equal(page.submissions, 1);
+});
+
+test('does not enforce US ZIP syntax on international postal codes', () => {
+  const page = checkout('Canada', undefined, undefined, undefined, undefined, {}, {
+    zip: 'K1A 0B1',
+  });
+  assert.equal(page.hints.some((hint) => hint.textContent.includes('U.S. ZIP codes')), false);
+  assert.ok(page.hints.some((hint) => hint.textContent.includes('format used in this country')));
+});
+
+test('warns when street address and PO Box are both entered', () => {
+  const page = checkout('United States', undefined, undefined, undefined, undefined, {}, {
+    addressLine1: '123 Main St',
+    addressLine2: 'PO Box 45',
+  });
+  assert.ok(page.hints.some((hint) => hint.textContent.includes('both a PO Box and a street address')));
+});
+
+test('PO Box and street warning does not block the shopper', async () => {
+  const page = checkout('United States', undefined, undefined, undefined, undefined, {}, {
+    addressLine1: '123 Main St',
+    addressLine2: 'PO Box 45',
+  });
+  await page.submit();
+  assert.ok(page.hints.some((hint) => hint.textContent.includes('both a PO Box and a street address')));
+  assert.equal(page.submissions, 1);
+});
+
+test('does not warn about PO Box with an apartment line or a standalone PO Box', () => {
+  for (const [addressLine1, addressLine2] of [
+    ['123 Main St', 'Apt 4'],
+    ['PO Box 45', ''],
+  ]) {
+    const page = checkout('United States', undefined, undefined, undefined, undefined, {}, {
+      addressLine1,
+      addressLine2,
+    });
+    assert.equal(page.hints.some((hint) => hint.textContent.includes('both a PO Box and a street address')), false);
+  }
 });
