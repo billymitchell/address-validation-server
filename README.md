@@ -1,19 +1,53 @@
 # Address Validation Server
 
 A small Express API that validates postal addresses (domestic and international) for an
-e-commerce checkout, backed by the
-[Google Address Validation API](https://developers.google.com/maps/documentation/address-validation).
+e-commerce checkout, backed by Google's Address Validation API and/or Smarty's Street
+APIs.
 
 The front-end calls it when the shopper finishes entering their address — once for the
 shipping address and once for the billing address (the two calls can be fired in
 parallel). The server returns a normalized verdict plus a suggested/corrected address
-when Google finds issues, so the UI can show a "Did you mean…?" prompt.
+when the selected provider finds issues, so the UI can show a "Did you mean…?" prompt.
 
 ## API
 
 ### `POST /api/validate-address`
 
-Request body (all fields map to Google's `PostalAddress`):
+US addresses use the configured domestic provider. Addresses for every other
+`regionCode` use the configured international provider. Smarty is the default for
+both. Set the providers independently to `google` or `smarty`; for example, Smarty
+for US addresses and Google internationally:
+
+```dotenv
+DOMESTIC_VALIDATION_PROVIDER=smarty
+INTERNATIONAL_VALIDATION_PROVIDER=google
+```
+
+Smarty uses its US Street API for US addresses and its International Street API for
+all other countries. Its results are normalized to the same response shape used by
+Google. A Smarty US result is confirmed only when its DPV match code is `Y`;
+ambiguous or non-deliverable results are marked for review or invalid.
+
+### APO/FPO/DPO military addresses
+
+Enter military mail as a US address (`regionCode: "US"`), regardless of where the
+recipient is stationed. Use `APO`, `FPO`, or `DPO` for `locality`, the military unit,
+PSC, ship, or box in `addressLines`, and the military ZIP code in `postalCode`.
+Do not enter the overseas base or country as the destination.
+
+The storefront may send the long state labels **Armed Forces Americas (except Canada)**,
+**Armed Forces Africa, Canada, Europe, Middle East**, or **Armed Forces Pacific**. Before
+validation, the API converts those labels to USPS state codes `AA`, `AE`, or `AP`,
+respectively. Already-abbreviated codes are also accepted. This normalization applies
+to both configured domestic providers, Google and Smarty. Provider results that return
+the codes are mapped back to the storefront's long labels by the frontend.
+
+Use USPS-eligible delivery for these addresses; military mail routing and carrier
+serviceability are separate from address validation. Follow [USPS military and
+diplomatic mail guidance](https://www.usps.com/ship/apo-fpo-dpo.htm) and [Publication
+28's military address format](https://pe.usps.com/text/pub28/28c2_010.htm).
+
+Request body (the same address fields are normalized for the selected provider):
 
 | Field | Type | Required | Notes |
 | --- | --- | --- | --- |
@@ -60,7 +94,7 @@ Example response:
 `status` is one of:
 
 - `confirmed` — address is complete and verified
-- `corrected` — Google fixed/inferred components; show `suggestedAddress` for confirmation
+- `corrected` — the provider corrected components; show `suggestedAddress` for confirmation
 - `unconfirmed` — some components couldn't be confirmed; review `messages`
 - `invalid` — address could not be resolved to a deliverable location
 
@@ -76,8 +110,9 @@ Liveness probe, returns `{ "status": "ok" }`. Not rate-limited or origin-restric
   Everything else gets `403`.
 - **Rate limiting:** per client IP (defaults: 100 requests / 15 minutes).
 - Request bodies are capped at 10 KB and strictly validated.
-- The Google API key lives only in a server-side env var and is never sent to clients.
-- Timeouts on upstream Google calls (default 10 s) return `504` instead of hanging.
+- Google and Smarty credentials live only in server-side environment variables and
+  are never sent to clients.
+- Upstream calls have a configurable timeout (default 10 s).
 
 ## Front-end integration
 
@@ -179,16 +214,16 @@ name mappings can be added to `countryCodes` in `address-validation.js`.
 
 ## Local development
 
-Prerequisites: Node.js 24 and a Google Cloud API key with the
-**Address Validation API** enabled.
+Prerequisites: Node.js 24 and Smarty Auth ID/token credentials. Google credentials
+are needed only if either provider setting is changed to `google`.
 
 ```bash
 npm install
-cp .env.example .env   # then fill in GOOGLE_MAPS_API_KEY and ALLOWED_ORIGINS
+cp .env.example .env   # then fill in credentials for the selected providers and ALLOWED_ORIGINS
 npm start
 ```
 
-Run the tests (Google API calls are mocked — no key needed):
+Run the tests (provider API calls are mocked — no live credentials needed):
 
 ```bash
 npm test
@@ -199,7 +234,10 @@ npm test
 ```bash
 heroku create your-app-name
 heroku config:set \
-  GOOGLE_MAPS_API_KEY=your-google-api-key \
+  DOMESTIC_VALIDATION_PROVIDER=smarty \
+  INTERNATIONAL_VALIDATION_PROVIDER=smarty \
+  SMARTY_AUTH_ID=your-smarty-auth-id \
+  SMARTY_AUTH_TOKEN=your-smarty-auth-token \
   ALLOWED_ORIGINS=https://store1.com,https://store2.com
 git push heroku main
 ```
@@ -216,18 +254,44 @@ heroku config:set ALLOWED_ORIGINS=https://store1.com,https://store2.com,https://
 
 ## Configuration
 
-If validation returns `502`, the error message now distinguishes Google API
-access, billing, key restrictions, and quota failures when Google supplies a
-recognized reason. Server logs include Google's HTTP status and a recognized
-reason code, without the raw upstream message, metadata, API key, or address.
-Check that Address Validation API and billing are enabled for the key's project
-and that the key restrictions permit calls from the backend server.
+Smarty counts each submitted address as one lookup. Shipping and billing
+validation therefore use two lookups if both are checked. The following
+examples are monthly Professional subscription prices from Smarty's [US Address
+Verification pricing](https://www.smarty.com/pricing) and [International Address
+Verification pricing](https://www.smarty.com/pricing/international-address-verification),
+checked September 29, 2026. The charge shown is the lowest monthly plan that
+covers the indicated volume for that product; it is not a per-call rate. If
+both domestic and international addresses are validated, the applicable plans
+are billed separately.
+
+| Address lookups in one month | US plan | US monthly price | International plan | International monthly price |
+| ---: | ---: | ---: | ---: | ---: |
+| 100 | 1,000 | $17 | 1,000 | $40 |
+| 500 | 1,000 | $17 | 1,000 | $40 |
+| 1,000 | 1,000 | $17 | 1,000 | $40 |
+| 2,500 | 5,000 | $50 | 2,500 | $95 |
+| 5,000 | 5,000 | $50 | 5,000 | $185 |
+| 10,000 | 10,000 | $88 | 10,000 | $350 |
+
+Smarty offers discrete plan sizes, so volumes below a plan's included lookups
+still incur that plan's monthly price. Pricing and plan options may change;
+confirm current prices in your Smarty account before budgeting or subscribing.
+
+If validation returns `502`, check the provider's credentials and service
+access. Smarty account-credit exhaustion returns a payment-required error from
+Smarty; Google failures report a recognized cause when available. Logs avoid
+recording raw upstream payloads, addresses, or credentials.
 
 | Env var | Required | Default | Description |
 | --- | --- | --- | --- |
-| `GOOGLE_MAPS_API_KEY` | ✅ | | Google Cloud API key (Address Validation API enabled) |
+| `DOMESTIC_VALIDATION_PROVIDER` | | `smarty` | Provider for US addresses: `google` or `smarty` |
+| `INTERNATIONAL_VALIDATION_PROVIDER` | | `smarty` | Provider for non-US addresses: `google` or `smarty` |
+| `GOOGLE_MAPS_API_KEY` | Conditional | | Google Cloud API key, required if Google is selected for either provider |
+| `SMARTY_AUTH_ID` | Conditional | | Smarty auth ID, required if Smarty is selected for either provider |
+| `SMARTY_AUTH_TOKEN` | Conditional | | Smarty auth token, required if Smarty is selected for either provider |
+| `SMARTY_EMBEDDED_KEY` | | | Optional browser key; not used by this server-side integration |
 | `ALLOWED_ORIGINS` | ✅ | | Comma-separated HTTPS storefront origins; supports `https://*.example.com` |
 | `PORT` | | `3000` | Listen port (set automatically by Heroku) |
 | `RATE_LIMIT_WINDOW_MS` | | `900000` | Rate-limit window (15 min) |
 | `RATE_LIMIT_MAX` | | `100` | Max requests per IP per window |
-| `GOOGLE_API_TIMEOUT_MS` | | `10000` | Timeout for Google API calls |
+| `GOOGLE_API_TIMEOUT_MS` | | `10000` | Timeout for upstream address-validation calls |

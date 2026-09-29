@@ -201,6 +201,27 @@ test('suggestions show and apply full US state and country names', async () => {
   assert.deepEqual(page.changes, [['state', 'change']]);
 });
 
+test('military state-code suggestions map back to storefront state labels', async () => {
+  const militaryStates = [
+    ['AA', 'Armed Forces Americas (except Canada)'],
+    ['AE', 'Armed Forces Africa, Canada, Europe, Middle East'],
+    ['AP', 'Armed Forces Pacific'],
+  ];
+  for (const [code, name] of militaryStates) {
+    const page = checkout('United States', undefined, undefined, undefined, undefined, {
+      value: 'California',
+      suggested: code,
+      options: [['California'], ...militaryStates.map(([, stateName]) => [stateName])],
+      useStorefront: true,
+    });
+    await page.submit();
+    assert.ok(page.modalNodes['[data-suggested-address]'].textContent.includes(name));
+    assert.doesNotMatch(page.modalNodes['[data-suggested-address]'].textContent, new RegExp(`\\b${code}\\b`));
+    page.modalNodes['[data-use-updated]'].click();
+    assert.equal(page.state.value, name);
+  }
+});
+
 test('state mapping is scoped by country and supports Canadian provinces', async () => {
   const page = checkout('Canada', undefined, undefined, undefined, undefined, {
     value: 'Ontario', suggested: 'BC', options: [['Ontario'], ['British Columbia']],

@@ -1,7 +1,7 @@
 {
   "name": "address-validation-server",
   "version": "1.0.0",
-  "description": "Address validation API proxy for e-commerce checkouts, backed by the Google Address Validation API",
+  "description": "Address validation API proxy for e-commerce checkouts, backed by Google and Smarty",
   "type": "module",
   "engines": {
     "node": "24.x"
@@ -13,6 +13,7 @@
   "dependencies": {
     "cors": "^2.8.5",
     "express": "^5.2.1",
-    "express-rate-limit": "^7.5.0"
+    "express-rate-limit": "^7.5.0",
+    "smartystreets-javascript-sdk": "^13.0.1"
   }
 }

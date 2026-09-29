@@ -1,8 +1,21 @@
 import { Router } from 'express';
-import { validateAddress, ApiError } from '../services/addressValidation.js';
+import { validateAddressWithProvider, ApiError } from '../services/addressValidation.js';
 
 const OPTIONAL_STRING_FIELDS = ['locality', 'administrativeArea', 'postalCode', 'organization'];
 const MAX_ADDRESS_LINES = 5;
+const US_MILITARY_STATE_CODES = new Map([
+  ['AA', 'AA'],
+  ['ARMED FORCES (AA)', 'AA'],
+  ['ARMED FORCES AMERICAS', 'AA'],
+  ['ARMED FORCES AMERICAS (EXCEPT CANADA)', 'AA'],
+  ['AE', 'AE'],
+  ['ARMED FORCES (AE)', 'AE'],
+  ['ARMED FORCES EUROPE', 'AE'],
+  ['ARMED FORCES AFRICA, CANADA, EUROPE, MIDDLE EAST', 'AE'],
+  ['AP', 'AP'],
+  ['ARMED FORCES (AP)', 'AP'],
+  ['ARMED FORCES PACIFIC', 'AP'],
+]);
 
 function parseAddressInput(body) {
   if (!body || typeof body !== 'object' || Array.isArray(body)) {
@@ -37,6 +50,11 @@ function parseAddressInput(body) {
     }
   }
 
+  if (address.regionCode === 'US' && address.administrativeArea) {
+    const militaryState = US_MILITARY_STATE_CODES.get(address.administrativeArea.toUpperCase());
+    if (militaryState) address.administrativeArea = militaryState;
+  }
+
   if (!address.addressLines && !address.postalCode) {
     throw new ApiError(400, 'Provide at least one of addressLines or postalCode.');
   }
@@ -54,8 +72,14 @@ export function createValidateAddressRouter(config) {
   router.post('/api/validate-address', async (req, res, next) => {
     try {
       const address = parseAddressInput(req.body);
-      const result = await validateAddress(address, {
+      const provider = address.regionCode === 'US'
+        ? config.domesticProvider || 'google'
+        : config.internationalProvider || 'google';
+      const result = await validateAddressWithProvider(address, {
+        provider,
         apiKey: config.googleApiKey,
+        smartyAuthId: config.smartyAuthId,
+        smartyAuthToken: config.smartyAuthToken,
         timeoutMs: config.googleApiTimeoutMs,
       });
       res.json(result);

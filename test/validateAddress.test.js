@@ -211,6 +211,53 @@ test('international addresses may omit or leave optional locality, state and pos
   }
 });
 
+test('normalizes APO/FPO/DPO storefront states to USPS codes for Google', async () => {
+  const upstreamAddresses = [];
+  const restore = mockGoogleFetch(async (url, options) => {
+    upstreamAddresses.push(JSON.parse(options.body).address);
+    return new Response(JSON.stringify(googleResponse()), { status: 200 });
+  });
+  const militaryAddresses = [
+    ['APO', 'Armed Forces Africa, Canada, Europe, Middle East', 'AE'],
+    ['FPO', 'Armed Forces Pacific', 'AP'],
+    ['DPO', 'Armed Forces Americas (except Canada)', 'AA'],
+    ['APO', 'Armed Forces (AE)', 'AE'],
+    ['FPO', 'ap', 'AP'],
+  ];
+
+  try {
+    await withServer(baseConfig, async (baseUrl) => {
+      for (const [locality, administrativeArea, expectedState] of militaryAddresses) {
+        const response = await postAddress(baseUrl, {
+          regionCode: 'US',
+          addressLines: ['Unit 45013 Box 2666'],
+          locality,
+          administrativeArea,
+          postalCode: '96338',
+        });
+        assert.equal(response.status, 200);
+      }
+    });
+  } finally {
+    restore();
+  }
+
+  assert.deepEqual(
+    upstreamAddresses.map(({ locality, administrativeArea, addressLines, postalCode }) => ({
+      locality,
+      administrativeArea,
+      addressLines,
+      postalCode,
+    })),
+    militaryAddresses.map(([locality, , administrativeArea]) => ({
+      locality,
+      administrativeArea,
+      addressLines: ['Unit 45013 Box 2666'],
+      postalCode: '96338',
+    })),
+  );
+});
+
 test('returns invalid when Google cannot resolve the address', async () => {
   const unresolved = googleResponse({ verdict: { validationGranularity: 'OTHER', addressComplete: false } });
   const restore = mockGoogleFetch(async () => new Response(JSON.stringify(unresolved), { status: 200 }));

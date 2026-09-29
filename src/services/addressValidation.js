@@ -125,3 +125,11 @@ export async function validateAddress(address, { apiKey, timeoutMs }) {
   const payload = await response.json();
   return normalizeResult(payload.result);
 }
+
+export async function validateAddressWithProvider(address, options) {
+  if (options.provider === 'smarty') {
+    const { validateWithSmarty } = await import('./smartyAddressValidation.js');
+    return validateWithSmarty(address, options);
+  }
+  return validateAddress(address, options);
+}
