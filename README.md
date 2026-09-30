@@ -98,6 +98,71 @@ Example response:
 - `unconfirmed` — some components couldn't be confirmed; the checkout warns and lets the shopper review or choose whether to continue
 - `invalid` — address could not be resolved to a deliverable location; the checkout warns and asks the shopper to review or explicitly continue
 
+### Manual address-entry tests
+
+After starting the server, enter the following addresses in the sample storefront or
+send them to `POST /api/validate-address`. Replace `https://your-app.herokuapp.com`
+with the local or deployed API URL. Requests need an `Origin` that is listed in
+`ALLOWED_ORIGINS`.
+
+```bash
+API_URL=http://localhost:3000
+ORIGIN=https://store1.com
+
+validate() {
+  curl --silent --show-error --fail-with-body \
+    -X POST "$API_URL/api/validate-address" \
+    -H "Content-Type: application/json" \
+    -H "Origin: $ORIGIN" \
+    -d "$1"
+  printf '\n\n'
+}
+```
+
+Run these cases and inspect the returned `status`, `suggestedAddress`, `verdict`,
+and `messages` fields:
+
+| Test | Address data to enter | Expected result |
+| --- | --- | --- |
+| Valid U.S. address | `1600 Amphitheatre Pkwy`, Mountain View, CA `94043`, country `US` | HTTP `200`; normally `confirmed` |
+| U.S. address with a company | Organization `Acme Corporation`; address lines `Acme Corporation` and `1600 Amphitheatre Pkwy`; Mountain View, CA `94043`, country `US` | HTTP `200`; the provider receives both address lines and the optional organization |
+| Corrected U.S. address | `1600 Amphitheatre Pkwy`, Mountain View, CA `94043`, country `US` (also try a deliberate typo such as `1600 Amphitheatre Pk` or `Main Stret`) | HTTP `200`; `corrected` when the provider replaces a component, with a `suggestedAddress` |
+| International address | `2 rue Léon Blum`, Puteaux, Île-de-France `92800`, country `FR` | HTTP `200`; normally `confirmed` or `corrected`, depending on the provider |
+| Address with optional fields blank | `123 Example Road`, country `HK`; leave locality, region, and postal code blank | HTTP `200` if the configured provider supports the country and address |
+| APO/FPO/DPO address | `Unit 45013 Box 2666`, `APO`, state `Armed Forces Africa, Canada, Europe, Middle East`, ZIP `96338`, country `US` | HTTP `200`; the API normalizes the state to `AE` before provider validation |
+| Unresolvable address | `No Such Road`, country `US` | HTTP `200`; `invalid` or `unconfirmed`, with a review message |
+| Missing country | Any postal code, but omit `regionCode` | HTTP `400`; an error explaining that `regionCode` is required |
+| Missing address data | Country `US`, but leave both address lines and postal code blank | HTTP `400`; an error explaining that one of `addressLines` or `postalCode` is required |
+
+Example requests for the most important cases:
+
+```bash
+# Confirmed U.S. address
+validate '{"regionCode":"US","addressLines":["1600 Amphitheatre Pkwy"],"locality":"Mountain View","administrativeArea":"CA","postalCode":"94043"}'
+
+# International address
+validate '{"regionCode":"FR","addressLines":["2 rue Léon Blum"],"locality":"Puteaux","administrativeArea":"Île-de-France","postalCode":"92800"}'
+
+# APO address using the long storefront state label
+validate '{"regionCode":"US","addressLines":["Unit 45013 Box 2666"],"locality":"APO","administrativeArea":"Armed Forces Africa, Canada, Europe, Middle East","postalCode":"96338"}'
+
+# Invalid request: no country code
+validate '{"postalCode":"94043"}'
+```
+
+Also verify the surrounding system behavior:
+
+1. Submit the same address through both the shipping and billing forms and confirm
+   that each request is validated independently.
+2. When a correction is returned, compare the entered and suggested addresses, then
+   accept the suggestion and confirm that the corrected values are applied to the form.
+3. Try an origin that is not in `ALLOWED_ORIGINS`; the API should return HTTP `403`.
+4. Request `GET /health`; it should return HTTP `200` and `{ "status": "ok" }`.
+
+Provider coverage and response wording can vary by country and by configured provider.
+Treat the expected statuses above as acceptance criteria for the user experience,
+while checking the returned suggestion and messages for the exact provider result.
+
 ### `GET /health`
 
 Liveness probe, returns `{ "status": "ok" }`. Not rate-limited or origin-restricted.
