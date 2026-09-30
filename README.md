@@ -98,6 +98,25 @@ Example response:
 - `unconfirmed` — some components couldn't be confirmed; the checkout warns and lets the shopper review or choose whether to continue
 - `invalid` — address could not be resolved to a deliverable location; the checkout warns and asks the shopper to review or explicitly continue
 
+### Address-formatting variation tests
+
+Enter these variations in order, submitting each as a separate request to
+`POST /api/validate-address`. Keep the address fields the same except for the
+formatting change in each step:
+
+1. **Baseline:** `1600 Amphitheatre Pkwy`, Mountain View, CA `94043`, country `US`.
+2. **Expanded street suffix:** change the street to `1600 Amphitheatre Parkway`.
+3. **Different capitalization:** enter `1600 AMPHITHEATRE PKWY`.
+4. **Punctuation:** enter `1600 Amphitheatre Pkwy.`.
+5. **ZIP+4:** keep the baseline street and city, but enter `94043-1351` as the postal
+   code.
+
+For each submission, expect HTTP `200` for a well-formed request, then inspect
+`status`, `suggestedAddress`, and `messages`. The provider may return a normalized
+spelling or postal code, or may leave the entered formatting unchanged; exact response
+text is provider-dependent. These examples test formatting acceptance, not whether the
+API itself rewrites every input.
+
 ### Manual address-entry tests
 
 After starting the server, enter the following addresses in the sample storefront or
