@@ -1,7 +1,7 @@
 function parsePositiveInt(value, fallback, name) {
   if (value === undefined || value === '') return fallback;
-  const parsed = Number.parseInt(value, 10);
-  if (!Number.isFinite(parsed) || parsed <= 0) {
+  const parsed = Number(value);
+  if (!/^\d+$/.test(String(value)) || !Number.isSafeInteger(parsed) || parsed <= 0) {
     throw new Error(`Config error: ${name} must be a positive integer, got "${value}"`);
   }
   return parsed;

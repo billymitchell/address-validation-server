@@ -77,6 +77,7 @@ export function createValidateAddressRouter(config) {
         : config.internationalProvider || 'google';
       const result = await validateAddressWithProvider(address, {
         provider,
+        requestId: req.requestId,
         apiKey: config.googleApiKey,
         smartyAuthId: config.smartyAuthId,
         smartyAuthToken: config.smartyAuthToken,

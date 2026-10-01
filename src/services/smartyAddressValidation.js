@@ -1,4 +1,5 @@
 import SmartySDK from 'smartystreets-javascript-sdk';
+import { fieldsChanged, streetsChanged, internationalStreetLines, meaningfulChange } from './addressComparison.js';
 import { ApiError } from './addressValidation.js';
 
 function smartyClient(service, { authId, authToken, timeoutMs }) {
@@ -11,14 +12,15 @@ function smartyClient(service, { authId, authToken, timeoutMs }) {
     : builder.buildInternationalStreetClient();
 }
 
-async function sendSmartyLookup(client, lookup) {
+async function sendSmartyLookup(client, lookup, requestId) {
   try {
     return await client.send(lookup);
   } catch (error) {
     const errors = SmartySDK.core.Errors;
     const sdkError = error?.error ?? error;
-    const errorType = sdkError instanceof Error ? sdkError.constructor.name : 'UnknownError';
-    console.error('Smarty Address Validation request failed:', { errorType });
+    const knownTypes = ['RequestTimeoutError', 'GatewayTimeoutError', 'BadCredentialsError', 'ForbiddenError', 'PaymentRequiredError', 'TooManyRequestsError'];
+    const errorType = knownTypes.find((name) => sdkError instanceof errors[name]) || 'UnknownError';
+    console.error('Smarty Address Validation request failed:', { category: 'smarty_upstream_error', errorType, requestId });
 
     if (sdkError instanceof errors.RequestTimeoutError || sdkError instanceof errors.GatewayTimeoutError) {
       throw new ApiError(504, 'Smarty address validation service timed out.');
@@ -54,7 +56,7 @@ function invalidResult(message) {
   };
 }
 
-function normalizeUsCandidate(candidate) {
+function normalizeUsCandidate(candidate, original) {
   if (!candidate) return invalidResult('Smarty could not confirm this address as deliverable.');
 
   const components = candidate.components ?? {};
@@ -66,8 +68,9 @@ function normalizeUsCandidate(candidate) {
   const outputLines = [...streetLines, candidate.lastLine].filter(Boolean);
   const dpvMatchCode = analysis.dpvMatchCode;
   const hasChanges = Object.values(analysis.components ?? {}).some(
-    (component) => Array.isArray(component.change) && component.change.length > 0,
-  );
+    (component) => meaningfulChange(component?.change),
+  ) || fieldsChanged(original, { locality: components.cityName, administrativeArea: components.state, postalCode })
+    || streetsChanged(original, streetLines);
   const status = dpvMatchCode === 'Y'
     ? (hasChanges ? 'corrected' : 'confirmed')
     : dpvMatchCode === 'D' || dpvMatchCode === 'S'
@@ -101,9 +104,10 @@ function normalizeUsCandidate(candidate) {
   };
 }
 
-function normalizeInternationalCandidate(candidate, regionCode) {
+function normalizeInternationalCandidate(candidate, original) {
   if (!candidate) return invalidResult('Smarty could not verify this address.');
 
+  const regionCode = original.regionCode;
   const components = candidate.components ?? {};
   const analysis = candidate.analysis ?? {};
   const lines = [
@@ -117,20 +121,14 @@ function normalizeInternationalCandidate(candidate, regionCode) {
     candidate.address8,
   ].filter((line) => typeof line === 'string' && line.trim());
   const changes = analysis.changes ?? {};
-  const hasChanges = [
-    changes.address1,
-    changes.address2,
-    changes.address3,
-    changes.address4,
-    changes.address5,
-    changes.address6,
-    changes.address7,
-    changes.address8,
-  ].some((line) => typeof line === 'string' && line.trim());
+  const hasChanges = Object.entries(changes).some(([key, value]) =>
+    key !== 'organization' && meaningfulChange(value))
+    || fieldsChanged(original, components)
+    || streetsChanged(original, internationalStreetLines(lines, components, original.organization));
   const verificationStatus = analysis.verificationStatus?.toLowerCase();
   const status = verificationStatus === 'verified'
     ? (hasChanges ? 'corrected' : 'confirmed')
-    : verificationStatus === 'ambiguous'
+    : verificationStatus === 'ambiguous' || verificationStatus === 'partial'
       ? 'unconfirmed'
       : 'invalid';
   const precision = analysis.addressPrecision?.toUpperCase().replaceAll(' ', '_') ?? 'OTHER';
@@ -162,7 +160,20 @@ function normalizeInternationalCandidate(candidate, regionCode) {
   };
 }
 
-export async function validateWithSmarty(address, { smartyAuthId, smartyAuthToken, timeoutMs }) {
+function normalizeCandidates(candidates, normalize) {
+  const results = (candidates || []).map(normalize);
+  const result = results[0] || normalize();
+  if (results.length < 2) return result;
+  return {
+    ...result,
+    status: 'unconfirmed',
+    verdict: { ...result.verdict, addressComplete: false, hasUnconfirmedComponents: true },
+    candidates: results.map((item) => item.suggestedAddress).filter(Boolean),
+    messages: ['Multiple matching addresses were found. Choose an address or review your entry.'],
+  };
+}
+
+export async function validateWithSmarty(address, { smartyAuthId, smartyAuthToken, timeoutMs, requestId }) {
   if (address.regionCode === 'US') {
     const client = smartyClient('domestic', {
       authId: smartyAuthId,
@@ -176,8 +187,8 @@ export async function validateWithSmarty(address, { smartyAuthId, smartyAuthToke
     lookup.state = address.administrativeArea;
     lookup.zipCode = address.postalCode;
     lookup.addressee = address.organization;
-    const response = await sendSmartyLookup(client, lookup);
-    return normalizeUsCandidate(response.lookups?.[0]?.result?.[0]);
+    const response = await sendSmartyLookup(client, lookup, requestId);
+    return normalizeCandidates(response.lookups?.[0]?.result, (candidate) => normalizeUsCandidate(candidate, address));
   }
 
   const client = smartyClient('international', {
@@ -195,6 +206,6 @@ export async function validateWithSmarty(address, { smartyAuthId, smartyAuthToke
   lookup.administrativeArea = address.administrativeArea;
   lookup.postalCode = address.postalCode;
   lookup.organization = address.organization;
-  const response = await sendSmartyLookup(client, lookup);
-  return normalizeInternationalCandidate(response.result?.[0], address.regionCode);
+  const response = await sendSmartyLookup(client, lookup, requestId);
+  return normalizeCandidates(response.result, (candidate) => normalizeInternationalCandidate(candidate, address));
 }

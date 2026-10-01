@@ -51,3 +51,34 @@ test('non-JSON Google errors still return a controlled API error', async (t) => 
     { statusCode: 502, message: 'Address validation service returned an error.' },
   );
 });
+
+
+test('malformed successful Google responses return controlled upstream errors', async (t) => {
+  for (const body of ['not JSON', '{}', '{"result":{}}']) {
+    t.mock.method(globalThis, 'fetch', async () => new Response(body));
+    await assert.rejects(validateAddress({ regionCode: 'US' }, { apiKey: 'key', timeoutMs: 1000 }),
+      { statusCode: 502, message: 'Address validation service returned an invalid response.' });
+  }
+});
+
+test('Google timeout covers reading the response body', async (t) => {
+  t.mock.method(globalThis, 'fetch', async (url, { signal }) => ({
+    ok: true,
+    json: () => new Promise((resolve, reject) => {
+      signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true });
+    }),
+  }));
+  await assert.rejects(validateAddress({ regionCode: 'US' }, { apiKey: 'key', timeoutMs: 10 }),
+    { statusCode: 504, message: 'Address validation service timed out.' });
+});
+
+test('Google component spelling corrections trigger review even without aggregate correction flags', async (t) => {
+  t.mock.method(globalThis, 'fetch', async () => new Response(JSON.stringify({ result: {
+    verdict: { addressComplete: true, validationGranularity: 'PREMISE' },
+    address: { postalAddress: { regionCode: 'US', addressLines: ['123 Main St'] },
+      addressComponents: [{ componentType: 'route', componentName: { text: 'Main' }, spellCorrected: true }] },
+  } })));
+  const result = await validateAddress({ regionCode: 'US', addressLines: ['123 Mian St'] }, { apiKey: 'key', timeoutMs: 1000 });
+  assert.equal(result.status, 'corrected');
+  assert.equal(result.verdict.hasReplacedComponents, true);
+});

@@ -53,3 +53,12 @@ test('rejects unsupported provider settings', () => {
     /INTERNATIONAL_VALIDATION_PROVIDER must be "google" or "smarty"/,
   );
 });
+
+
+test('numeric configuration requires a complete positive safe integer', () => {
+  const env = { ...baseEnv, DOMESTIC_VALIDATION_PROVIDER: 'google', INTERNATIONAL_VALIDATION_PROVIDER: 'google' };
+  for (const value of ['100abc', '1.5', '1e3', '-1', '0', '9007199254740992']) {
+    assert.throws(() => loadConfig({ ...env, RATE_LIMIT_MAX: value }), /positive integer/);
+  }
+  assert.equal(loadConfig({ ...env, RATE_LIMIT_MAX: '100' }).rateLimitMax, 100);
+});

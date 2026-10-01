@@ -213,8 +213,10 @@ Liveness probe, returns `{ "status": "ok" }`. Not rate-limited or origin-restric
 The form also reminds shoppers to include apartment, suite, unit, floor, or building
 details when applicable. It gives U.S.-specific ZIP format guidance, uses country-neutral
 postal-code guidance elsewhere, and warns without blocking when a street address and
-PO Box are both entered. It also retains a non-blocking hint for a likely company name
-in Address Line 1. These hints do not replace provider validation or carrier checks.
+PO Box are both entered. When Address Line 1 contains a likely company name and Address Line 2 contains
+a street address, completing an edit or submitting moves the company to the Company
+field, moves the street to Address Line 1, and clears Address Line 2. A different
+existing company is preserved; a non-blocking hint remains for review. These hints do not replace provider validation or carrier checks.
 
 Suggested ZIP/postal codes have hyphens removed before display and application
 to the form. All digits are retained: `20191-1441` becomes `201911441`.
@@ -387,3 +389,21 @@ recording raw upstream payloads, addresses, or credentials.
 | `RATE_LIMIT_WINDOW_MS` | | `900000` | Rate-limit window (15 min) |
 | `RATE_LIMIT_MAX` | | `100` | Max requests per IP per window |
 | `GOOGLE_API_TIMEOUT_MS` | | `10000` | Timeout for upstream address-validation calls |
+
+
+The browser aborts validation after 15 seconds and restores checkout controls for retry.
+Set `data-validation-timeout-ms="20000"` on `#checkout-form` to override the deadline.
+Multiple Smarty matches are returned in `candidates` and shown in a selector in the
+review dialog. Tab and Shift+Tab stay inside the dialog; Escape closes it and restores
+focus. The server generates an `X-Request-ID` for every response and includes that ID
+in sanitized error logs; unexpected errors never log raw error objects or request data.
+
+
+Smarty correction detection compares returned street/unit and locality/region/postal
+fields with the submitted values, in addition to checking component-change metadata.
+Common US street/unit abbreviations, state name/code equivalents, case, whitespace,
+and ZIP+4 enrichment do not by themselves trigger review. International mailing lines
+containing only separate locality/region/postal/company fields are excluded from street
+comparison. Other differences conservatively request review; partial and ambiguous
+matches remain unconfirmed. Google component-level spelling/replacement flags also
+trigger correction review when aggregate flags are absent.

@@ -8,6 +8,15 @@ const storefront = JSON.parse(readFileSync(new URL('./fixtures/storefront-region
 
 function checkout(countryValue, regionAttribute, suggestedRegion, companyValue, suggestedPostalCode, stateConfig = {}, fieldOverrides = {}) {
   const handlers = {};
+  const addressField = (value) => ({
+    value,
+    addEventListener(name, callback) { this[name] = callback; },
+    dispatchEvent(event) { this[event.type]?.(event); },
+    parentNode: { appendChild: (element) => hintNodes.push(element) },
+  });
+  const company = companyValue === undefined ? null : addressField(companyValue);
+  const addressLine1 = addressField(fieldOverrides.addressLine1 ?? '123 Main St');
+  const addressLine2 = addressField(fieldOverrides.addressLine2 ?? '');
   const requests = [];
   const errors = [];
   const hintNodes = [];
@@ -37,28 +46,32 @@ function checkout(countryValue, regionAttribute, suggestedRegion, companyValue, 
     },
   };
   let submissions = 0;
+  const button = { tagName: 'BUTTON', textContent: 'Place order', dataset: {}, disabled: false, focus() { activeElement = this; } };
+  let activeElement = button;
   const form = {
-    dataset: {},
-    querySelector: () => null,
+    dataset: { validationTimeoutMs: stateConfig.timeoutMs },
+    querySelector: (selector) => selector.includes('submit') ? button : errors[0] || null,
     addEventListener: (name, callback) => { handlers[name] = callback; },
     prepend: (element) => errors.push(element),
-    requestSubmit() { submissions++; },
+    requestSubmit() { submissions++; handlers.submit({ preventDefault() { throw new Error("Native submission was intercepted"); } }); },
   };
   const modalNodes = {};
   const modal = {
+    addEventListener(name, callback) { this[name] = callback; },
     setAttribute() {},
     remove() { this.removed = true; },
     querySelector(selector) {
       return modalNodes[selector] ||= {
         textContent: '',
         hidden: false,
-        focus() {},
+        focus() { activeElement = this; },
+        appendChild(element) { (this.children ||= []).push(element); },
         addEventListener(name, callback) { this[name] = callback; },
       };
     },
   };
   runInNewContext(script, {
-    Event,
+    Event, AbortController, setTimeout, clearTimeout,
     ...(stateConfig.useStorefront ? {
       country_arr: storefront.countries.map((country) => country.name),
       get_country_id: (name) => storefront.countries.findIndex((country) => country.name === name) + 1,
@@ -67,28 +80,15 @@ function checkout(countryValue, regionAttribute, suggestedRegion, companyValue, 
     console: { log() {} },
     document: {
       readyState: 'complete',
+      get activeElement() { return activeElement; },
       getElementById(id) {
         if (id === 'checkout-form') return form;
         if (id.endsWith('_country')) return country;
         if (id.endsWith('_zip')) return zip;
         if (id.endsWith('_state')) return state;
-        if (id.endsWith('_company') && companyValue !== undefined) {
-          return { value: companyValue, addEventListener() {} };
-        }
-        if (id.endsWith('_first_address')) {
-          return {
-            value: fieldOverrides.addressLine1 ?? '123 Main St',
-            addEventListener() {},
-            parentNode: { appendChild: (element) => hintNodes.push(element) },
-          };
-        }
-        if (id.endsWith('_second_address')) {
-          return {
-            value: fieldOverrides.addressLine2 ?? '',
-            addEventListener() {},
-            parentNode: { appendChild: (element) => hintNodes.push(element) },
-          };
-        }
+        if (id.endsWith('_company')) return company;
+        if (id.endsWith('_first_address')) return addressLine1;
+        if (id.endsWith('_second_address')) return addressLine2;
         if (id.endsWith('_city') && fieldOverrides.city !== undefined) {
           return { value: fieldOverrides.city, addEventListener() {} };
         }
@@ -101,12 +101,18 @@ function checkout(countryValue, regionAttribute, suggestedRegion, companyValue, 
     fetch: async (url, options) => {
       const address = JSON.parse(options.body);
       requests.push(address);
+      if (stateConfig.abortNext) {
+        stateConfig.abortNext = false;
+        await new Promise((resolve, reject) => options.signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError'))));
+      }
+      if (stateConfig.fetchGate) await stateConfig.fetchGate;
       return {
         ok: true,
         json: async () => {
-          const hasSuggestion = suggestedRegion || suggestedPostalCode !== undefined || stateConfig.suggested !== undefined;
+          const hasSuggestion = stateConfig.suggestedLines || suggestedRegion || suggestedPostalCode !== undefined || stateConfig.suggested !== undefined;
           const suggestedAddress = hasSuggestion ? {
             ...address,
+            ...(stateConfig.suggestedLines ? { addressLines: stateConfig.suggestedLines, organization: undefined } : {}),
             regionCode: suggestedRegion || address.regionCode,
             postalCode: suggestedPostalCode ?? address.postalCode,
             administrativeArea: stateConfig.suggested ?? address.administrativeArea,
@@ -114,6 +120,7 @@ function checkout(countryValue, regionAttribute, suggestedRegion, companyValue, 
           if (stateConfig.resultStatus) {
             return {
               status: stateConfig.resultStatus,
+              ...(stateConfig.candidates ? { candidates: stateConfig.candidates } : {}),
               messages: stateConfig.resultMessages || ['Please review your address.'],
               ...(suggestedAddress ? { suggestedAddress } : {}),
             };
@@ -126,7 +133,7 @@ function checkout(countryValue, regionAttribute, suggestedRegion, companyValue, 
     },
   });
   return {
-    country, zip, get state() { return state; }, get submissions() { return submissions; }, changes, requests, errors, modalNodes,
+    modal, button, get activeElement() { return activeElement; }, company, addressLine1, addressLine2, country, zip, get state() { return state; }, get submissions() { return submissions; }, changes, requests, errors, modalNodes,
     get companyHint() { return hintNodes.find((hint) => hint.className.includes('address-validation-hint--company')); },
     get hints() { return hintNodes; },
     async submit() {
@@ -491,11 +498,11 @@ test('shows an inline hint when a company name looks like it was entered in addr
   assert.equal(page.companyHint.textContent, 'This looks like a company name. Did you mean to enter it in the Company field instead of Address line 1?');
 });
 
-test('does not show the hint when the Company field is already filled in', () => {
+test('shows a review hint before relocating an already supplied company', () => {
   const page = checkout('United States', undefined, undefined, 'Acme Corporation', undefined, {}, {
     addressLine1: 'Acme Corporation', addressLine2: '1600 Amphitheatre Pkwy',
   });
-  assert.equal(page.companyHint.textContent, '');
+  assert.ok(page.companyHint.textContent.length > 0);
 });
 
 test('does not show the hint for an ordinary two-line address', () => {
@@ -569,4 +576,157 @@ test('does not warn about PO Box with an apartment line or a standalone PO Box',
     });
     assert.equal(page.hints.some((hint) => hint.textContent.includes('both a PO Box and a street address')), false);
   }
+});
+
+
+test('relocates a misplaced company and street before validation and submission', async () => {
+  for (const existing of ['', '  ', 'Acme Corporation']) {
+    const page = checkout('United States', undefined, undefined, existing, undefined, {}, {
+      addressLine1: ' Acme Corporation ', addressLine2: ' 1600 Amphitheatre Pkwy Suite 4 ',
+    });
+    await page.submit();
+    assert.equal(page.company.value, 'Acme Corporation');
+    assert.equal(page.addressLine1.value, '1600 Amphitheatre Pkwy Suite 4');
+    assert.equal(page.addressLine2.value, '');
+    assert.equal(page.requests[0].organization, 'Acme Corporation');
+    assert.deepEqual(page.requests[0].addressLines, ['1600 Amphitheatre Pkwy Suite 4']);
+    assert.equal(page.submissions, 1);
+  }
+});
+
+test('relocates on completed edits but waits while the customer types', () => {
+  const page = checkout('United States', undefined, undefined, '', undefined, {}, {
+    addressLine1: 'Acme Corporation', addressLine2: '',
+  });
+  page.addressLine2.value = '123 Main St';
+  page.addressLine2.input();
+  assert.equal(page.company.value, '');
+  page.addressLine2.change();
+  assert.equal(page.company.value, 'Acme Corporation');
+  assert.equal(page.addressLine1.value, '123 Main St');
+  assert.equal(page.addressLine2.value, '');
+});
+
+test('preserves conflicting companies and ordinary two-line addresses', async () => {
+  for (const [company, line1, line2] of [
+    ['Other Company', 'Acme Corporation', '123 Main St'],
+    ['', '123 Company Road', '456 Main St'],
+    ['', '123 Main St', 'Apt 4'],
+  ]) {
+    const page = checkout('United States', undefined, undefined, company, undefined, {}, {
+      addressLine1: line1, addressLine2: line2,
+    });
+    await page.submit();
+    assert.equal(page.company.value, company);
+    assert.equal(page.addressLine1.value, line1);
+    assert.equal(page.addressLine2.value, line2);
+  }
+});
+
+
+test('ignores duplicate submissions and rejects stale validation results', async () => {
+  let release;
+  const fetchGate = new Promise((resolve) => { release = resolve; });
+  const page = checkout('United States', undefined, undefined, '', undefined, { fetchGate });
+  await page.submit();
+  await page.submit();
+  assert.equal(page.requests.length, 1);
+  page.addressLine1.value = '456 New St';
+  release();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(page.submissions, 0);
+  assert.equal(page.addressLine1.value, '456 New St');
+  assert.match(page.errors[0].textContent, /changed during validation/);
+  await page.submit();
+  assert.equal(page.submissions, 1);
+});
+
+test('preserves all suggested address lines and company in review', async () => {
+  const page = checkout('United States', undefined, undefined, 'Acme', undefined, {
+    suggestedLines: ['456 New St', 'Building A', 'Suite 4'],
+  });
+  await page.submit();
+  assert.match(page.modalNodes['[data-suggested-address]'].textContent, /^Acme/);
+  await page.submit();
+  assert.equal(page.requests.length, 1);
+  page.modalNodes['[data-use-updated]'].click();
+  assert.equal(page.addressLine2.value, 'Building A, Suite 4');
+  assert.equal(page.company.value, 'Acme');
+});
+
+test('unexpected validation statuses do not submit checkout', async () => {
+  const page = checkout('United States', undefined, undefined, '', undefined, { resultStatus: 'unknown' });
+  await page.submit();
+  assert.equal(page.submissions, 0);
+  assert.match(page.errors[0].textContent, /unexpected response/);
+});
+
+test('PO boxes are not relocated into the company field', async () => {
+  const page = checkout('United States', undefined, undefined, '', undefined, {}, {
+    addressLine1: 'PO Box 123', addressLine2: '456 Main St',
+  });
+  await page.submit();
+  assert.equal(page.company.value, '');
+  assert.equal(page.addressLine1.value, 'PO Box 123');
+});
+
+
+test('revalidates a retry when native checkout submission does not navigate', async () => {
+  const page = checkout('United States');
+  await page.submit();
+  await page.submit();
+  assert.equal(page.requests.length, 2);
+  assert.equal(page.submissions, 2);
+});
+
+
+test('timeout restores the visible button label and permits retry', async () => {
+  const page = checkout('United States', undefined, undefined, '', undefined, { timeoutMs: 5, abortNext: true });
+  await page.submit();
+  assert.equal(page.button.textContent, 'Verifying address...');
+  assert.equal(page.button.disabled, true);
+  await new Promise((resolve) => setTimeout(resolve, 15));
+  assert.match(page.errors[0].textContent, /timed out.*try again/);
+  assert.equal(page.button.textContent, 'Place order');
+  assert.equal(page.button.disabled, false);
+  assert.equal(page.submissions, 0);
+  await page.submit();
+  assert.equal(page.submissions, 1);
+  assert.equal(page.errors[0].textContent, '');
+});
+
+test('candidate selector applies the chosen candidate and dialog traps keyboard focus', async () => {
+  const page = checkout('United States', undefined, undefined, 'Acme', undefined, {
+    resultStatus: 'unconfirmed',
+    candidates: [
+      { regionCode: 'US', addressLines: ['111 Main St'], administrativeArea: 'Maryland' },
+      { regionCode: 'US', addressLines: ['222 Main St'], administrativeArea: 'Maryland' },
+    ],
+  });
+  await page.submit();
+  const selector = page.modalNodes['[data-address-candidate]'];
+  assert.equal(selector.children.length, 2);
+  let prevented = false;
+  page.modal.keydown({ key: 'Tab', preventDefault() { prevented = true; } });
+  assert.equal(prevented, true);
+  assert.equal(page.activeElement, selector);
+  page.modal.keydown({ key: 'Tab', shiftKey: true, preventDefault() {} });
+  assert.equal(page.activeElement, page.modalNodes['[data-use-updated]']);
+  selector.value = '1';
+  selector.change();
+  assert.match(page.modalNodes['[data-suggested-address]'].textContent, /222 Main St/);
+  page.modalNodes['[data-use-updated]'].click();
+  assert.equal(page.addressLine1.value, '222 Main St');
+  assert.equal(page.submissions, 1);
+});
+
+test('Escape closes review, restores focus, and allows another validation', async () => {
+  const page = checkout('United States', undefined, undefined, '', undefined, { resultStatus: 'unconfirmed' });
+  await page.submit();
+  page.modal.keydown({ key: 'Escape', preventDefault() {} });
+  assert.equal(page.modal.removed, true);
+  assert.equal(page.activeElement, page.button);
+  assert.equal(page.submissions, 0);
+  await page.submit();
+  assert.equal(page.requests.length, 2);
 });

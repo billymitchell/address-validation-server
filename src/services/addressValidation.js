@@ -51,8 +51,10 @@ function mapPostalAddress(postalAddress, formattedAddress) {
 }
 
 function normalizeResult(result) {
-  const verdict = result?.verdict ?? {};
   const address = result?.address;
+  const missedCorrection = (address?.addressComponents || []).some((component) => component.spellCorrected || component.replaced);
+  const verdict = { ...result?.verdict,
+    hasReplacedComponents: Boolean(result?.verdict?.hasReplacedComponents || missedCorrection) };
   return {
     status: deriveStatus(verdict),
     suggestedAddress: mapPostalAddress(address?.postalAddress, address?.formattedAddress),
@@ -76,7 +78,7 @@ const GOOGLE_ERROR_MESSAGES = {
   API_KEY_IP_ADDRESS_BLOCKED: 'The server Google API key does not allow requests from this server IP.',
 };
 
-async function upstreamError(response) {
+async function upstreamError(response, requestId) {
   const payload = await response.json().catch(() => null);
   const details = payload?.error?.details;
   const reason = Array.isArray(details) && details
@@ -84,6 +86,8 @@ async function upstreamError(response) {
     .find((value) => typeof value === 'string' && Object.hasOwn(GOOGLE_ERROR_MESSAGES, value));
   // Never log Google's raw message or metadata: these can contain keys or addresses.
   console.error('Google Address Validation request failed:', {
+    category: 'google_upstream_error',
+    requestId,
     httpStatus: response.status,
     reason: reason || 'UNKNOWN',
   });
@@ -97,19 +101,31 @@ async function upstreamError(response) {
   return new ApiError(502, message);
 }
 
-export async function validateAddress(address, { apiKey, timeoutMs }) {
+export async function validateAddress(address, { apiKey, timeoutMs, requestId }) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
-  let response;
   try {
-    response = await fetch(`${GOOGLE_VALIDATE_URL}?key=${apiKey}`, {
+    const response = await fetch(`${GOOGLE_VALIDATE_URL}?key=${apiKey}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ address }),
       signal: controller.signal,
     });
+    if (!response.ok) throw await upstreamError(response, requestId);
+    let payload;
+    try {
+      payload = await response.json();
+    } catch (err) {
+      if (err.name === 'AbortError') throw err;
+      throw new ApiError(502, 'Address validation service returned an invalid response.');
+    }
+    if (!payload?.result?.verdict) {
+      throw new ApiError(502, 'Address validation service returned an invalid response.');
+    }
+    return normalizeResult(payload.result);
   } catch (err) {
+    if (err instanceof ApiError) throw err;
     if (err.name === 'AbortError') {
       throw new ApiError(504, 'Address validation service timed out.');
     }
@@ -117,13 +133,6 @@ export async function validateAddress(address, { apiKey, timeoutMs }) {
   } finally {
     clearTimeout(timer);
   }
-
-  if (!response.ok) {
-    throw await upstreamError(response);
-  }
-
-  const payload = await response.json();
-  return normalizeResult(payload.result);
 }
 
 export async function validateAddressWithProvider(address, options) {

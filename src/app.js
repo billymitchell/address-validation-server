@@ -1,4 +1,5 @@
 import express from 'express';
+import { randomUUID } from 'node:crypto';
 import cors from 'cors';
 import rateLimit from 'express-rate-limit';
 import { isAllowedOrigin, originGuard } from './middleware/originGuard.js';
@@ -12,6 +13,12 @@ export function createApp(config) {
   // rate limiting use the real client IP from X-Forwarded-For.
   app.set('trust proxy', 1);
   app.disable('x-powered-by');
+
+  app.use((req, res, next) => {
+    req.requestId = randomUUID();
+    res.setHeader('X-Request-ID', req.requestId);
+    next();
+  });
 
   app.use(express.json({ limit: '10kb' }));
 

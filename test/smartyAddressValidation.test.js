@@ -117,3 +117,76 @@ test('reports credential errors without returning Smarty response details', asyn
   );
   assert.doesNotMatch(JSON.stringify(logs), /private address|credential details/);
 });
+
+
+test('partially verified international addresses require review rather than being invalid', async (t) => {
+  t.mock.method(globalThis, 'fetch', async () => new Response(JSON.stringify([{
+    address1: 'Main Street',
+    analysis: { verification_status: 'Partial', address_precision: 'Thoroughfare' },
+  }]), { headers: { 'Content-Type': 'application/json' } }));
+  const result = await validateWithSmarty({ regionCode: 'GB', addressLines: ['Main Street'] }, smartyOptions);
+  assert.equal(result.status, 'unconfirmed');
+  assert.equal(result.verdict.addressComplete, false);
+});
+
+
+test('exposes all ambiguous international candidates for shopper selection', async (t) => {
+  t.mock.method(globalThis, 'fetch', async () => new Response(JSON.stringify([
+    { address1: '1 Main St', analysis: { verification_status: 'Ambiguous' } },
+    { address1: '2 Main St', analysis: { verification_status: 'Ambiguous' } },
+  ]), { headers: { 'Content-Type': 'application/json' } }));
+  const result = await validateWithSmarty({ regionCode: 'GB', addressLines: ['Main St'] }, smartyOptions);
+  assert.equal(result.status, 'unconfirmed');
+  assert.equal(result.candidates.length, 2);
+  assert.deepEqual(result.candidates[1].addressLines, ['2 Main St']);
+});
+
+test('detects US corrections without change metadata and preserves formatting equivalence', async (t) => {
+  let candidate;
+  t.mock.method(globalThis, 'fetch', async () => new Response(JSON.stringify([candidate]), {
+    headers: { 'Content-Type': 'application/json' },
+  }));
+  const original = { regionCode: 'US', addressLines: ['123 Main Street', 'Apartment 4'], locality: 'Reston', administrativeArea: 'Virginia', postalCode: '20191' };
+  const base = { delivery_line_1: '123 MAIN ST APT 4', components: { city_name: 'RESTON', state_abbreviation: 'VA', zipcode: '20191', plus4_code: '1234' }, analysis: { dpv_match_code: 'Y' } };
+  candidate = base;
+  assert.equal((await validateWithSmarty(original, smartyOptions)).status, 'confirmed');
+  for (const change of [
+    { delivery_line_1: '132 Main St Apt 4' },
+    { delivery_line_1: '123 Other St Apt 4' },
+    { delivery_line_1: '123 Main St Apt 5' },
+    { delivery_line_1: '123 Main St' },
+    { components: { ...base.components, city_name: 'Herndon' } },
+    { components: { ...base.components, zipcode: '20190' } },
+  ]) {
+    candidate = { ...base, ...change };
+    const result = await validateWithSmarty(original, smartyOptions);
+    assert.equal(result.status, 'corrected');
+    assert.equal(result.verdict.hasReplacedComponents, true);
+  }
+  candidate = { ...base, delivery_line_1: '132 Main St', analysis: { dpv_match_code: 'D' } };
+  assert.equal((await validateWithSmarty(original, smartyOptions)).status, 'unconfirmed');
+});
+
+test('international comparisons ignore mailing locality lines but detect field and unit corrections', async (t) => {
+  let candidate;
+  t.mock.method(globalThis, 'fetch', async () => new Response(JSON.stringify([candidate]), {
+    headers: { 'Content-Type': 'application/json' },
+  }));
+  const original = { regionCode: 'FR', addressLines: ['2 rue Léon Blum', 'Appartement 4'], locality: 'Puteaux', postalCode: '92800' };
+  const base = { address1: '2 rue Léon Blum', address2: 'Appartement 4', address3: '92800 Puteaux', components: { locality: 'Puteaux', postal_code: '92800' }, analysis: { verification_status: 'Verified', changes: { components: { thoroughfare: 'Verified', premise: 'Identical' } } } };
+  candidate = base;
+  assert.equal((await validateWithSmarty(original, smartyOptions)).status, 'confirmed');
+  for (const change of [
+    { address1: '3 rue Léon Blum' },
+    { address2: 'Appartement 5' },
+    { components: { locality: 'Paris', postal_code: '92800' } },
+    { components: { locality: 'Puteaux', postal_code: '92801' } },
+    { analysis: { verification_status: 'Verified', changes: { components: { postal_code: 'SmallChange' } } } },
+    { analysis: { verification_status: 'Verified', changes: { components: { premise: 'LargeChange' } } } },
+  ]) {
+    candidate = { ...base, ...change };
+    assert.equal((await validateWithSmarty(original, smartyOptions)).status, 'corrected');
+  }
+  candidate = { ...base, analysis: { verification_status: 'Partial', changes: { components: { premise: 'LargeChange' } } } };
+  assert.equal((await validateWithSmarty(original, smartyOptions)).status, 'unconfirmed');
+});

@@ -8,6 +8,9 @@ export function errorHandler(err, req, res, next) {
   if (err?.type === 'entity.parse.failed' || err?.type === 'entity.too.large') {
     return res.status(400).json({ error: 'Malformed or oversized request body.' });
   }
-  console.error('Unexpected error:', err);
-  return res.status(500).json({ error: 'Internal server error.' });
+  // Never serialize the error, request, stack, or upstream payload.
+  const category = err instanceof SyntaxError ? 'syntax_error'
+    : err instanceof TypeError ? 'type_error' : 'unexpected_error';
+  console.error('Request failed:', { category, requestId: req.requestId });
+  return res.status(500).json({ error: 'Internal server error.', requestId: req.requestId });
 }

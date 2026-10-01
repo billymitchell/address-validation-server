@@ -12,6 +12,8 @@
   var apiUrl = (form.dataset.validationApi || 'https://address-validation-centricity-e22fd890f144.herokuapp.com').replace(/\/+$/, '');
   var submitButton = form.querySelector('input[type="submit"], button[type="submit"]');
   var nativeSubmit = false;
+  var validationPending = false;
+  var resultModalOpen = false;
 
   var fields = {
     addressLine1: document.getElementById('website_order_shipping_address_attributes_first_address'),
@@ -647,17 +649,15 @@
     });
 
     currentAddress = address;
-    console.log('Address state updated:', address);
     updateCompanyHint();
     return address;
   }
 
   // --- Company-in-address-line-1 hint ------------------------------------------------
-  // Best-effort, non-blocking signal: customers sometimes enter their company name in
+  // Customers sometimes enter their company name in
   // "Address line 1" and push their real street address down to "Address line 2",
-  // leaving the Company field blank. There's no way to detect this with certainty, so
-  // this only powers an inline suggestion under the address fields and never blocks
-  // or alters submission.
+  // leaving the Company field blank. Move these values on change or submission,
+  // once the customer has finished typing, without overwriting a different company.
   var STARTS_WITH_NUMBER = /^\d+[\w-]*(\s|$)/;
   var STREET_SUFFIX = /\b(st|street|ave|avenue|blvd|boulevard|rd|road|dr|drive|ln|lane|way|pkwy|parkway|ct|court|ter|terrace|hwy|highway|cir|circle|pl|place|suite|ste|unit|apt|#)\b/i;
   var COMPANY_SUFFIX = /\b(inc|incorporated|llc|ltd|limited|corp|corporation|co|company|group|llp|plc|enterprises|industries|holdings|partners|associates)\b/i;
@@ -668,6 +668,21 @@
 
   function looksLikeStreetLine(line) {
     return Boolean(line) && STARTS_WITH_NUMBER.test(line) && STREET_SUFFIX.test(line);
+  }
+
+  function relocateCompanyAddress() {
+    var line1 = valueOf(fields.addressLine1);
+    var line2 = valueOf(fields.addressLine2);
+    var company = valueOf(fields.company);
+    if (!fields.company || /\bP\.?\s*O\.?\s*Box\b/i.test(line1) || !looksLikeCompanyName(line1) || looksLikeStreetLine(line1)
+      || !looksLikeStreetLine(line2) || (company && company.toLowerCase() !== line1.toLowerCase())) return;
+
+    fields.company.value = company || line1;
+    fields.addressLine1.value = line2;
+    fields.addressLine2.value = '';
+    [fields.company, fields.addressLine1, fields.addressLine2].forEach(function (field) {
+      field.dispatchEvent(new Event('input', { bubbles: true }));
+    });
   }
 
   var companyHintEl;
@@ -730,8 +745,7 @@
 
     var line1 = valueOf(fields.addressLine1);
     var line2 = valueOf(fields.addressLine2);
-    var company = valueOf(fields.company);
-    var suspicious = !company && looksLikeCompanyName(line1) && looksLikeStreetLine(line2);
+    var suspicious = looksLikeCompanyName(line1) && !looksLikeStreetLine(line1) && looksLikeStreetLine(line2);
 
     hint.textContent = suspicious
       ? 'This looks like a company name. Did you mean to enter it in the Company field instead of Address line 1?'
@@ -769,14 +783,19 @@
   function showLoader() {
     if (!submitButton) return;
     submitButton.disabled = true;
-    submitButton.dataset.originalValue = submitButton.value || 'Continue';
-    submitButton.value = 'Verifying address...';
+    var labelProperty = submitButton.tagName === 'BUTTON' ? 'textContent' : 'value';
+    submitButton.dataset.originalValue = submitButton[labelProperty];
+    submitButton[labelProperty] = 'Verifying address...';
   }
 
   function hideLoader() {
     if (!submitButton) return;
     submitButton.disabled = false;
-    submitButton.value = submitButton.dataset.originalValue || 'Continue';
+    var labelProperty = submitButton.tagName === 'BUTTON' ? 'textContent' : 'value';
+    if (submitButton.dataset.originalValue !== undefined) {
+      submitButton[labelProperty] = submitButton.dataset.originalValue;
+      delete submitButton.dataset.originalValue;
+    }
   }
 
   function showError(message) {
@@ -857,7 +876,7 @@
       fields.state.dispatchEvent(new Event('change', { bubbles: true }));
     }
     if (fields.addressLine1) fields.addressLine1.value = (address.addressLines && address.addressLines[0]) || '';
-    if (fields.addressLine2) fields.addressLine2.value = (address.addressLines && address.addressLines[1]) || '';
+    if (fields.addressLine2) fields.addressLine2.value = (address.addressLines && address.addressLines.slice(1).join(', ')) || '';
     if (fields.city) fields.city.value = address.locality || '';
     if (fields.postalCode) fields.postalCode.value = address.postalCode || '';
     return true;
@@ -865,17 +884,25 @@
 
   function continueWith(address) {
     if (applyAddress(address) === false) return;
+    hideLoader();
     nativeSubmit = true;
-
-    if (typeof form.requestSubmit === 'function') {
-      form.requestSubmit(submitButton);
-    } else {
-      HTMLFormElement.prototype.submit.call(form);
+    try {
+      if (typeof form.requestSubmit === 'function') {
+        if (submitButton) form.requestSubmit(submitButton);
+        else form.requestSubmit();
+      } else {
+        HTMLFormElement.prototype.submit.call(form);
+      }
+    } finally {
+      nativeSubmit = false;
     }
   }
 
-  function createResultModal(original, suggested, status, messages) {
-    var hasSuggestion = suggested && !addressesMatch(original, suggested);
+  function createResultModal(original, suggested, status, messages, candidates) {
+    resultModalOpen = true;
+    var previousFocus = document.activeElement;
+    var hasCandidates = candidates && candidates.length > 1;
+    var hasSuggestion = hasCandidates || (suggested && !addressesMatch(original, suggested));
     var modal = document.createElement('div');
     modal.className = 'address-validation-modal';
     modal.setAttribute('role', 'dialog');
@@ -887,6 +914,7 @@
       '<div class="address-validation-dialog">',
       '  <h2 id="address-validation-title">' + (status === 'corrected' ? 'Confirm your address' : 'Review your address') + '</h2>',
       '  <p data-validation-message></p>',
+      '  <label data-candidate-label hidden>Choose a matching address<select data-address-candidate></select></label>',
       '  <div class="address-validation-comparison">',
       '    <section><h3>Previously entered</h3><pre data-original-address></pre></section>',
       '    <section data-suggested-section><h3>Suggested address</h3><pre data-suggested-address></pre></section>',
@@ -911,10 +939,46 @@
       modal.querySelector('[data-suggested-address]').textContent = displayAddress(suggested);
     }
     modal.querySelector('[data-use-updated]').hidden = !hasSuggestion;
+    var candidateSelect = modal.querySelector('[data-address-candidate]');
+    modal.querySelector('[data-candidate-label]').hidden = !hasCandidates;
+    if (hasCandidates) {
+      candidates.forEach(function (candidate, index) {
+        var option = document.createElement('option');
+        option.value = String(index);
+        option.textContent = displayAddress(candidate);
+        candidateSelect.appendChild(option);
+      });
+      candidateSelect.value = '0';
+      suggested = candidates[0];
+      modal.querySelector('[data-suggested-address]').textContent = displayAddress(suggested);
+      candidateSelect.addEventListener('change', function () {
+        suggested = candidates[Number(candidateSelect.value)];
+        modal.querySelector('[data-suggested-address]').textContent = displayAddress(suggested);
+      });
+    }
     document.body.appendChild(modal);
 
-    var closeAndContinue = function (selectedAddress) {
+    function closeModal() {
       modal.remove();
+      resultModalOpen = false;
+      if (previousFocus && typeof previousFocus.focus === 'function') previousFocus.focus();
+    }
+    modal.addEventListener('keydown', function (event) {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        closeModal();
+      } else if (event.key === 'Tab') {
+        var controls = [modal.querySelector('[data-review-address]'), modal.querySelector('[data-use-previous]')];
+        if (hasSuggestion) controls.push(modal.querySelector('[data-use-updated]'));
+        if (hasCandidates) controls.unshift(candidateSelect);
+        var index = controls.indexOf(document.activeElement);
+        event.preventDefault();
+        controls[(index + (event.shiftKey ? -1 : 1) + controls.length) % controls.length].focus();
+      }
+    });
+
+    var closeAndContinue = function (selectedAddress) {
+      closeModal();
       continueWith(selectedAddress);
     };
 
@@ -929,7 +993,7 @@
     }
 
     modal.querySelector('[data-review-address]').addEventListener('click', function () {
-      modal.remove();
+      closeModal();
     });
 
     modal.querySelector('.address-validation-backdrop').addEventListener('click', function () {
@@ -959,6 +1023,8 @@
   }
 
   async function validateAndContinue() {
+    if (validationPending || resultModalOpen) return;
+    relocateCompanyAddress();
     var original = readAddress();
 
     if (!original.regionCode) {
@@ -971,13 +1037,21 @@
       return;
     }
 
+    validationPending = true;
+    var oldError = form.querySelector('[data-address-validation-error]');
+    if (oldError) oldError.textContent = '';
     showLoader();
+    var controller = new AbortController();
+    var configuredTimeout = Number(form.dataset.validationTimeoutMs);
+    var timeoutMs = Number.isFinite(configuredTimeout) && configuredTimeout > 0 ? configuredTimeout : 15000;
+    var timer = setTimeout(function () { controller.abort(); }, timeoutMs);
 
     try {
       var response = await fetch(apiUrl + '/api/validate-address', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(original)
+        body: JSON.stringify(original),
+        signal: controller.signal
       });
 
       var result = await response.json();
@@ -986,11 +1060,25 @@
         throw new Error(result.error || 'Address validation failed.');
       }
 
-      var suggested = result.suggestedAddress || original;
-      if (result.suggestedAddress && typeof suggested.postalCode === 'string') {
-        suggested = Object.assign({}, suggested, {
-          postalCode: normalizeSuggestedPostalCode(suggested.postalCode, suggested.regionCode)
-        });
+      if (!addressesMatch(original, readAddress())) {
+        showError('Your address changed during validation. Please continue again to validate the updated address.');
+        return;
+      }
+      if (!result || ['confirmed', 'corrected', 'unconfirmed', 'invalid'].indexOf(result.status) === -1) {
+        throw new Error('Address validation returned an unexpected response. Please try again.');
+      }
+      function prepareSuggestion(address) {
+        var prepared = Object.assign({}, address, { organization: original.organization });
+        if (typeof prepared.postalCode === 'string') {
+          prepared.postalCode = normalizeSuggestedPostalCode(prepared.postalCode, prepared.regionCode);
+        }
+        return prepared;
+      }
+      var candidates = Array.isArray(result.candidates) ? result.candidates.map(prepareSuggestion) : [];
+      var suggested = result.suggestedAddress ? prepareSuggestion(result.suggestedAddress) : original;
+      if (candidates.length > 1) {
+        createResultModal(original, candidates[0], result.status, result.messages, candidates);
+        return;
       }
 
       if (result.status === 'corrected') {
@@ -1005,8 +1093,12 @@
         continueWith(original);
       }
     } catch (error) {
-      showError(error.message || 'Address validation is unavailable. Try again.');
+      showError(error.name === 'AbortError'
+        ? 'Address validation timed out. Your address has been kept. Select Continue to try again.'
+        : (error.message || 'Address validation is unavailable. Try again.'));
     } finally {
+      clearTimeout(timer);
+      validationPending = false;
       if (!nativeSubmit) {
         hideLoader();
       }
@@ -1030,6 +1122,7 @@
         updateAddressHints();
       });
       input.addEventListener('change', function () {
+        relocateCompanyAddress();
         readAddress();
         updateAddressHints();
       });
